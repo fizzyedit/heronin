@@ -1,0 +1,8 @@
+.{
+    .name = .heronin,
+    .fingerprint = 0xc1276d74b807e6bf,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.0",
+    .paths = .{ "build.zig", "build.zig.zon", "app", "model", "layout.zon", "assets" },
+    .dependencies = .{ .fizzy = .{ .url = "https://github.com/fizzyedit/fizzy/archive/171f63fc5930b5dd318b96b30dc39de9df5cfc6d.tar.gz", .hash = "fizzy-0.2.0-c46aVgf1xAD9BHpI9h8egJ1MpxRNCUkeplpXWK5cX6CJ" } },
+}
