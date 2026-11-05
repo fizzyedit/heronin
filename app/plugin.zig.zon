@@ -1,0 +1,1 @@
+.{ .id = "heronin", .name = "Heronin", .version = "0.1.0", .min_sdk_version = "", .description = "Heronin photo library", .tags = .{"photos"} }

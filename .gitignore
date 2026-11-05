@@ -1,0 +1,4 @@
+.reference/
+.zig-cache/
+zig-out/
+zig-pkg/
