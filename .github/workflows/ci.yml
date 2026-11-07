@@ -1,0 +1,32 @@
+name: ci
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+env:
+  ZIG_VERSION: 0.17.0
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig fmt --check build.zig tools tests/check_public
+      - run: zig build
+      - run: zig build test
+      - run: zig build web
+      - run: zig build check-public
+  ci-ok:
+    if: always()
+    needs: [checks]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.checks.result }}" = success
