@@ -2,3 +2,16 @@
 .zig-cache/
 zig-out/
 zig-pkg/
+data/
+photos/
+thumbs/
+*.jsonl
+server.zon
+credentials.zon
+*.key
+.env*
+# Deliberately unsafe input trees for the public checker.
+!tests/check_public/**/server.zon
+!tests/check_public/**/credentials.zon
+!tests/check_public/**/*.jsonl
+!tests/check_public/**/.env*
