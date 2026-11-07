@@ -35,6 +35,7 @@ fn violation(path: []const u8, data: []const u8) ?Rule {
         if (std.mem.startsWith(u8, data[i..], "100.") and (i == 0 or (!std.ascii.isAlphanumeric(data[i - 1]) and data[i - 1] != '.'))) {
             var end = i;
             while (end < data.len and (std.ascii.isDigit(data[end]) or data[end] == '.')) : (end += 1) {}
+            if (end > i and data[end - 1] == '.') end -= 1;
             var parts = std.mem.splitScalar(u8, data[i..end], '.');
             var octets: [4]u8 = undefined;
             var count: usize = 0;
@@ -95,6 +96,12 @@ test "each public rule rejects its tree; clean tree passes" {
     try std.testing.expectEqual(null, try scanTree(io, "tests/check_public/clean"));
 }
 
+test "address followed by a full stop is rejected" {
+    const data = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/check_public/address/trailing-stop.txt", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(data);
+    try std.testing.expectEqual(Rule.address, violation("trailing-stop.txt", data).?);
+}
+
 fn scanTree(io: std.Io, path: []const u8) !?Rule {
     var dir = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer dir.close(io);
@@ -104,7 +111,10 @@ fn scanTree(io: std.Io, path: []const u8) !?Rule {
         if (entry.kind != .file) continue;
         const data = try dir.readFileAlloc(io, entry.path, std.testing.allocator, .unlimited);
         defer std.testing.allocator.free(data);
-        if (violation(entry.path, data)) |rule| return rule;
+        const normalized = try std.testing.allocator.dupe(u8, entry.path);
+        defer std.testing.allocator.free(normalized);
+        std.mem.replaceScalar(u8, normalized, '\\', '/');
+        if (violation(normalized, data)) |rule| return rule;
     }
     return null;
 }
