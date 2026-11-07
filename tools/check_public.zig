@@ -36,7 +36,8 @@ fn violation(path: []const u8, data: []const u8) ?Rule {
             var end = i;
             while (end < data.len and (std.ascii.isDigit(data[end]) or data[end] == '.')) : (end += 1) {}
             // Sentence punctuation is not an extra address octet.
-            const candidate = data[i .. end - @intFromBool(data[end - 1] == '.')];
+            var candidate = data[i..end];
+            if (std.mem.endsWith(u8, candidate, ".")) candidate = candidate[0 .. candidate.len - 1];
             var parts = std.mem.splitScalar(u8, candidate, '.');
             var octets: [4]u8 = undefined;
             var count: usize = 0;
@@ -104,7 +105,7 @@ test "address followed by a full stop is rejected" {
 }
 
 test "address range boundaries and punctuation" {
-    for ([_][]const u8{ "100" ++ ".64.0.0.", "(100" ++ ".127.255.255).", "100" ++ ".101.102.103" }) |data| {
+    for ([_][]const u8{ "100" ++ ".64.0.0.", "(100" ++ ".127.255.255).", "100" ++ ".101.102.103", "reach it at 100" ++ ".101.102.103.", "100" ++ ".101.102.103. Next sentence." }) |data| {
         try std.testing.expectEqual(Rule.address, violation("address.txt", data).?);
     }
     for ([_][]const u8{ "100" ++ ".63.255.255.", "100" ++ ".128.0.0.", "100" ++ ".101.102.256.", "100" ++ ".101.102.103.4", "1100" ++ ".101.102.103." }) |data| {

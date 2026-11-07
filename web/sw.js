@@ -3,6 +3,16 @@ const ROOT = '/heronin/';
 const SHELL = [ROOT, ROOT + 'index.html', ROOT + 'manifest.webmanifest',
   ROOT + 'fizzy.js', ROOT + 'web.js', ROOT + 'web.wasm',
   ROOT + 'fizzy-worker.js', ROOT + 'NotoSansKR-Regular.ttf'];
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE);
+  try {
+    const response = await fetch(request, {cache: 'no-store'});
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (await cache.match(request)) || Response.error();
+  }
+}
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
 });
@@ -17,17 +27,11 @@ self.addEventListener('fetch', event => {
       !url.pathname.startsWith(ROOT)) return;
   if (event.request.mode === 'navigate' || url.pathname === ROOT ||
       url.pathname === ROOT + 'index.html' || url.pathname === ROOT + 'build.json') {
-    event.respondWith(fetch(event.request, {cache: 'no-store'}).then(async response => {
-      if (response.ok) {
-        const cache = await caches.open(CACHE);
-        await cache.put(event.request, response.clone());
-      }
-      return response;
-    }).catch(() => caches.open(CACHE).then(cache => cache.match(event.request))
-      .then(response => response || Response.error())));
+    event.respondWith(networkFirst(event.request));
     return;
   }
   event.respondWith(caches.open(CACHE).then(async cache => {
+    // Keep the query string: a new deploy's cache buster must fetch new bytes.
     const cached = await cache.match(event.request);
     if (cached) return cached;
     const response = await fetch(event.request);
