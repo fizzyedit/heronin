@@ -1,1 +1,2 @@
 reach it at 100.101.102.103.
+Range boundaries in prose: 100.64.0.0. And 100.127.255.255.

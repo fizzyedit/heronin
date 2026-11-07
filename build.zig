@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
     for ([_][]const u8{ "manifest.webmanifest", "sw.js" }) |name| {
         const copy = b.addInstallFileWithDir(b.path(b.fmt("web/{s}", .{name})), .{ .custom = "web" }, name);
         for (web_step.dependencies.items) |dependency| copy.step.dependOn(dependency);
-        patch_run.step.dependOn(&copy.step);
+        web_step.dependOn(&copy.step);
     }
     web_step.dependOn(&page_install.step);
     const checker_module = b.createModule(.{ .root_source_file = b.path("tools/check_public.zig"), .target = b.graph.host, .optimize = optimize });

@@ -1,4 +1,4 @@
-const CACHE = 'heronin-shell-v1';
+const CACHE = 'heronin-shell-v2';
 const ROOT = '/heronin/';
 const SHELL = [ROOT, ROOT + 'index.html', ROOT + 'manifest.webmanifest',
   ROOT + 'fizzy.js', ROOT + 'web.js', ROOT + 'web.wasm',
