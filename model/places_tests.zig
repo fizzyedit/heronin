@@ -45,6 +45,17 @@ test "placeLabel uses only photo GPS and names covered points" {
     try std.testing.expectEqualStrings("Unnamed place", places.placeLabel(p, &saved).?);
 }
 
+test "namedPlace includes the radius boundary and skips nearer uncovered places" {
+    const point = Point{ .lat = 0, .lon = 0 };
+    const candidates = [_]model.Place{
+        .{ .id = 1, .name = "Small", .lat = 0.0001, .lon = 0, .radius_m = 1 },
+        .{ .id = 2, .name = "Large", .lat = 0.001, .lon = 0, .radius_m = 200 },
+    };
+    try std.testing.expectEqual(@as(u16, 2), places.namedPlace(point, &candidates).?.id);
+    const boundary = [_]model.Place{.{ .id = 3, .name = "Origin", .lat = 0, .lon = 0, .radius_m = 0 }};
+    try std.testing.expectEqual(@as(u16, 3), places.namedPlace(point, &boundary).?.id);
+}
+
 test "Photo with phone fix and saved Place round-trip through JSON" {
     var p = photo();
     p.place = .{ .lat = 41.1, .lon = -87.2 };
