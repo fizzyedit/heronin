@@ -1,6 +1,10 @@
 //! Heronin data model (plan 2.3). Types and doc comments only: no logic beyond the md5 JSON hooks.
 pub const SpeciesCode = []const u8; // eBird species code: usually 6 letters, some have 7 ("comgal1"), so not [6]u8
-pub const Place = struct { lat: f64, lon: f64 }; // degrees, WGS84
+pub const places = @import("places.zig");
+/// A saved named place; name is at most 40 bytes. Coordinates are degrees, WGS84.
+pub const Place = struct { id: u16, name: []const u8, lat: f64, lon: f64, radius_m: f32 = 150 };
+/// The phone position stamped at import; fixtures leave this null.
+pub const Fix = struct { lat: f64, lon: f64, accuracy_m: f32, at: i64 };
 pub const Box = struct { x: f32, y: f32, w: f32, h: f32 }; // 0..1 of the image, origin top left
 
 pub const Photo = struct {
@@ -8,7 +12,8 @@ pub const Photo = struct {
     md5: Md5, // Drive's md5Checksum
     name: []const u8, // file name
     taken_at: ?i64 = null, // unix seconds, UTC
-    place: ?Place = null,
+    place: ?struct { lat: f64, lon: f64 } = null, // photo GPS only
+    fix: ?Fix = null,
     camera: ?[]const u8 = null,
     w: u32,
     h: u32, // pixels

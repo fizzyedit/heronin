@@ -1,5 +1,5 @@
 const std = @import("std");
-const m = @import("model.zig");
+const m = @import("model");
 const theme = @import("theme");
 fn roundTrip(comptime T: type, value: T) !void {
     const json = try std.json.Stringify.valueAlloc(std.testing.allocator, value, .{});
@@ -51,4 +51,8 @@ test "light theme maps every DVUI color field to an opaque role" {
         const style = @field(t, name);
         inline for (.{ "fill", "fill_hover", "fill_press", "text", "text_hover", "text_press", "border" }) |field| try assertOpaque(@field(style, field).?);
     }
+}
+
+test {
+    _ = @import("places_tests.zig");
 }
