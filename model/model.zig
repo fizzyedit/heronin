@@ -1,6 +1,7 @@
 //! Heronin data model (plan 2.3). Types and doc comments only: no logic beyond the md5 JSON hooks.
 pub const SpeciesCode = []const u8; // eBird species code: usually 6 letters, some have 7 ("comgal1"), so not [6]u8
 pub const places = @import("places.zig");
+pub const species = @import("species.zig");
 /// A saved named place; name is at most 40 bytes. Coordinates are degrees, WGS84.
 pub const Place = struct { id: u16, name: []const u8, lat: f64, lon: f64, radius_m: f32 = 150 };
 /// The phone position stamped at import; fixtures leave this null.
