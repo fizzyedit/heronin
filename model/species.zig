@@ -1,4 +1,4 @@
-const model = @import("model");
+const model = @import("model.zig");
 const std = @import("std");
 
 pub const table = [_]model.Species{
