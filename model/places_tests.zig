@@ -1,7 +1,7 @@
 const std = @import("std");
 const model = @import("model");
 const places = model.places;
-const species = @import("species.zig");
+const species = model.species;
 const Point = struct { lat: f64, lon: f64 };
 const saved = [_]model.Place{
     .{ .id = 1, .name = "Wetland", .lat = 0, .lon = 0 },
