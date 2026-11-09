@@ -16,7 +16,9 @@ pub fn build(b: *std.Build) !void {
         .@"app-issues-url" = @as([]const u8, ""),
     });
     const manifest = try std.Io.Dir.cwd().readFileAlloc(b.graph.io, try b.root.joinString(b.allocator, "app/plugin.zig.zon"), b.allocator, .unlimited);
+    const model = b.addModule("model", .{ .root_source_file = b.path("model/model.zig"), .target = target, .optimize = optimize });
     const app = b.createModule(.{ .root_source_file = b.path("app/plugin.zig"), .target = target, .optimize = optimize });
+    app.addImport("model", model);
     app.addAnonymousImport("plugin_zon", .{ .root_source_file = b.path("app/plugin.zig.zon") });
     app.addOptions(fizzy.plugin.plugin_options_import, fizzy.plugin.pluginOptions(b, "heronin", "Heronin", "0.1.0", "", manifest));
     const built = try fizzy.addApp(fizzy_dep, &.{ fizzy.plugins.workbench, .{ .name = "heronin", .module = app } });
@@ -47,6 +49,7 @@ pub fn build(b: *std.Build) !void {
     checker_test_run.setCwd(b.path("."));
     checker_test_run.has_side_effects = true;
     const tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("model/model_tests.zig"), .target = target, .optimize = optimize }) });
+    tests.root_module.addImport("model", model);
     tests.root_module.addImport("theme", b.createModule(.{ .root_source_file = b.path("app/theme.zig"), .target = target, .optimize = optimize }));
     tests.root_module.import_table.get("theme").?.addImport("dvui", fizzy.framework(fizzy_dep, .native).dvui);
     const test_step = b.step("test", "Test models, theme, and public rules");
