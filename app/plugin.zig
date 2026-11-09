@@ -10,9 +10,11 @@ const photo = @import("views/photo.zig");
 var fake: ?@import("fake_store.zig").FakeStore = null;
 var state: library.State = .{};
 const add = @import("views/add.zig");
-var queue: @import("import_queue.zig").Queue = .{ .allocator = @import("std").heap.page_allocator };
+var queue: @import("import_queue.zig").Queue = undefined;
+var imported: usize = 0;
 pub var current: tabs.Tab = .library;
 pub fn register(host: *sdk.Host) !void {
+    queue = .{ .allocator = host.allocator };
     plugin.state = @ptrCast(host);
     try host.registerPlugin(&plugin);
     try host.registerSurface(.{ .id = "heronin.library", .owner = &plugin, .title = "Library", .keywords = &.{"heronin"}, .scrolls_itself = true, .draw = draw });
@@ -22,7 +24,8 @@ fn deinit(_: *anyopaque) void {
     fake = null;
     for (queue.rows.items) |row| queue.allocator.free(row.name);
     queue.deinit();
-    queue = .{ .allocator = @import("std").heap.page_allocator };
+    queue = .{ .allocator = queue.allocator };
+    imported = 0;
     state.arena.deinit();
     state = .{};
     current = .library;
@@ -34,12 +37,17 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         fake.?.store().places(&state, library.State.placed);
     }
     add.pick(&queue);
-    const importing = queue.busy;
+    if (current != .add) queue.step(fake.?.store());
+    if (queue.busy) dvui.refresh(null, @src(), null);
     fake.?.store().pump();
-    if (importing and !queue.busy and queue.rows.items[queue.active].state == .imported) {
+    var finished: usize = 0;
+    for (queue.rows.items) |row| {
+        if (row.state == .imported) finished += 1;
+    }
+    if (finished != imported) {
+        imported = finished;
         state.stale = true;
         dvui.refresh(null, @src(), null);
-        fake.?.store().list(null, 60, &state, library.State.listed);
     }
     if (current == .library and state.open == null and state.stale) state.reload(fake.?.store());
     if (!state.requested and state.items.len > 0) {
