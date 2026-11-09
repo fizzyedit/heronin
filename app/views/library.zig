@@ -39,6 +39,7 @@ pub const State = struct {
         self.items = copy(api.Item, self.arena.allocator(), result catch return) catch return;
         self.photos = self.arena.allocator().alloc(model.Photo, self.items.len) catch return;
         for (self.items, self.photos) |item, *photo| photo.* = item.photo;
+        self.requested = false;
     }
     pub fn placed(ctx: ?*anyopaque, result: api.Error![]const model.Place) void {
         const self: *State = @ptrCast(@alignCast(ctx.?));
