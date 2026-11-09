@@ -146,6 +146,7 @@ pub const FakeStore = struct {
         const self = cast(ptr);
         self.answer([]const model.Place, ctx, done, self.saved);
     }
+    /// Not reentrant; callbacks may queue answers for the next pump.
     fn pump(ptr: *anyopaque) void {
         const self = cast(ptr);
         const detached = self.live;

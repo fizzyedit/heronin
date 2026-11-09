@@ -6,9 +6,9 @@ const eq = std.testing.expectEqual;
 const a = std.testing.allocator;
 fn add(q: *imports.Queue, names: []const []const u8) !void {
     var buffers: [11][]u8 = undefined;
-    for (names, 0..) |name, i| buffers[i] = try a.dupe(u8, name);
+    for (names, 0..) |name, i| buffers[i] = try q.allocator.dupe(u8, name);
     q.add(names, buffers[0..names.len]) catch |err| {
-        for (buffers[0..names.len]) |buffer| a.free(buffer);
+        for (buffers[0..names.len]) |buffer| q.allocator.free(buffer);
         return err;
     };
 }
@@ -107,4 +107,69 @@ test "adding rows during upload keeps the callback attached to its row" {
     fake.store().pump();
     try eq(imports.State.imported, q.rows.items[0].state);
     for (q.rows.items[1..]) |row| try eq(imports.State.queued, row.state);
+}
+
+test "answer ids survive reuse and deinit frees owned ids" {
+    const Borrowing = struct {
+        id: [7]u8 = "answer1".*,
+        photo: @import("model").Photo,
+        ctx: ?*anyopaque = null,
+        done: ?api.Done(api.Imported) = null,
+        fn importFile(ptr: *anyopaque, _: []const u8, _: []const u8, ctx: ?*anyopaque, callback: api.Done(api.Imported)) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.ctx = ctx;
+            self.done = callback;
+        }
+        fn pump(ptr: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (self.done) |callback| {
+                self.done = null;
+                self.photo.id = &self.id;
+                callback(self.ctx, .{ .photo = self.photo, .new = true });
+            } else @memset(&self.id, 'x');
+        }
+    };
+    var fake = try FakeStore.init(a);
+    defer fake.deinit();
+    var borrowing: Borrowing = .{ .photo = fake.items[0].photo };
+    var table = fake.store().vtable.*;
+    table.importFile = Borrowing.importFile;
+    table.pump = Borrowing.pump;
+    const store: api.Store = .{ .ptr = &borrowing, .vtable = &table };
+    var tracked = std.testing.FailingAllocator.init(a, .{});
+    var q: imports.Queue = .{ .allocator = tracked.allocator() };
+    try add(&q, &.{"borrowed"});
+    q.step(store);
+    const before = tracked.allocated_bytes;
+    store.pump();
+    try eq(before + borrowing.id.len, tracked.allocated_bytes);
+    store.pump();
+    try std.testing.expectEqualStrings("answer1", q.rows.items[0].photo_id.?);
+    var item = fake.items[0];
+    item.photo.id = "answer1";
+    item.photo.state = .tagged;
+    try eq(@as(usize, 1), imports.counts(q.rows.items, &.{item}).tagged);
+    q.deinit();
+    try eq(tracked.allocated_bytes, tracked.freed_bytes);
+}
+
+test "id allocation failure marks failed, frees bytes, and allows the next import" {
+    var fake = try FakeStore.init(a);
+    defer fake.deinit();
+    var failing = std.testing.FailingAllocator.init(a, .{});
+    var q: imports.Queue = .{ .allocator = failing.allocator() };
+    defer q.deinit();
+    try add(&q, &.{ "first", "second" });
+    q.step(fake.store());
+    failing.fail_index = failing.alloc_index;
+    fake.store().pump();
+    try eq(imports.State.failed, q.rows.items[0].state);
+    try eq(error.OutOfMemory, q.rows.items[0].err.?);
+    try eq(null, q.rows.items[0].photo_id);
+    try eq(@as(usize, 0), q.pending.items[0].len);
+    try eq(false, q.busy);
+    failing.fail_index = std.math.maxInt(usize);
+    q.step(fake.store());
+    fake.store().pump();
+    try eq(imports.State.imported, q.rows.items[1].state);
 }

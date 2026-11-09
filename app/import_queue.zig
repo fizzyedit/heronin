@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("store.zig");
 pub const State = enum { queued, uploading, already_there, failed, imported };
+/// name borrows the caller's names; keep them alive for the queue's lifetime.
 pub const Row = struct { name: []const u8, state: State, photo_id: ?[]const u8 = null, err: ?api.Error = null };
 pub const Queue = struct {
     allocator: std.mem.Allocator,
@@ -8,7 +9,6 @@ pub const Queue = struct {
     pending: std.ArrayList([]u8) = .empty,
     busy: bool = false,
     active: usize = 0,
-    flight: Row = undefined,
     pub fn add(self: *Queue, names: []const []const u8, bytes: []const []u8) error{ TooMany, OutOfMemory }!void {
         if (names.len > 10) return error.TooMany;
         std.debug.assert(names.len == bytes.len);
@@ -26,27 +26,27 @@ pub const Queue = struct {
             self.busy = true;
             self.active = i;
             row.state = .uploading;
-            self.flight = row.*;
-            store.importFile(row.name, self.pending.items[i], &self.flight, done);
+            store.importFile(row.name, self.pending.items[i], self, done);
             return;
         }
     }
     fn done(ctx: ?*anyopaque, result: api.Error!api.Imported) void {
-        const self: *Queue = @fieldParentPtr("flight", @as(*Row, @ptrCast(@alignCast(ctx.?))));
+        const self: *Queue = @ptrCast(@alignCast(ctx.?));
         const row = &self.rows.items[self.active];
+        defer self.busy = false;
+        defer self.pending.items[self.active] = &.{};
+        defer self.allocator.free(self.pending.items[self.active]);
         if (result) |value| {
-            row.state = if (value.new) .imported else .already_there;
-            row.photo_id = value.photo.id;
+            const id = self.allocator.dupe(u8, value.photo.id) catch null;
+            row.* = .{ .name = row.name, .state = if (id == null) .failed else if (value.new) .imported else .already_there, .photo_id = id, .err = if (id == null) error.OutOfMemory else null };
         } else |err| {
             row.state = .failed;
             row.err = err;
         }
-        self.allocator.free(self.pending.items[self.active]);
-        self.pending.items[self.active] = &.{};
-        self.busy = false;
     }
     pub fn deinit(self: *Queue) void {
         for (self.pending.items) |bytes| self.allocator.free(bytes);
+        for (self.rows.items) |row| if (row.photo_id) |id| self.allocator.free(id);
         self.pending.deinit(self.allocator);
         self.rows.deinit(self.allocator);
     }
