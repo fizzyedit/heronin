@@ -53,6 +53,9 @@ pub fn build(b: *std.Build) !void {
     tests.root_module.addImport("theme", b.createModule(.{ .root_source_file = b.path("app/theme.zig"), .target = target, .optimize = optimize }));
     tests.root_module.import_table.get("theme").?.addImport("dvui", fizzy.framework(fizzy_dep, .native).dvui);
     const test_step = b.step("test", "Test models, theme, and public rules");
+    const app_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/app_tests.zig"), .target = target, .optimize = optimize }) });
+    app_tests.root_module.addImport("model", model);
+    test_step.dependOn(&b.addRunArtifact(app_tests).step);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&checker_test_run.step);
     b.step("check-public", "Check tracked files for private content").dependOn(&check_run.step);
