@@ -21,6 +21,10 @@ pub const FakeStore = struct {
             const name = try std.fmt.allocPrint(a, "fake-{d:0>2}.jpg", .{i});
             const at: i64 = 1_793_000_000 - @as(i64, @intCast(i * 9 / 60)) * 86_400 - @as(i64, @intCast(i % 7)) * 2_400;
             const offset = @as(f64, @floatFromInt(i % 10)) * 0.0003;
+            const marsh_lat: f64 = 60.0105;
+            const origin_lat: f64 = 0.0105;
+            const east_lon: f64 = 179.9995;
+            const west_lon: f64 = -179.9995;
             item.* = .{ .photo = .{
                 .id = name[0..7],
                 .name = name,
@@ -32,10 +36,10 @@ pub const FakeStore = struct {
                 .h = if (i % 3 == 1) 4000 else 3000,
                 .state = ([_]model.Photo.State{ .tagged, .review, .tagging, .new, .failed, .skipped })[i % 6],
                 .favorite = i % 5 == 0,
-                .place = if (i % 4 == 3) null else .{ .lat = (if (i % 3 == 1) @as(f64, 60.0105) else 0.0105) + offset, .lon = switch (i % 3) {
+                .place = if (i % 4 == 3) null else .{ .lat = (if (i % 3 == 1) marsh_lat else origin_lat) + offset, .lon = switch (i % 3) {
                     0 => 0.0105 + offset,
                     1 => -29.9895 + offset,
-                    else => if (i % 2 == 0) 179.9995 else -179.9995,
+                    else => if (i % 2 == 0) east_lon else west_lon,
                 } },
             }, .tags = &.{} };
             const tags = try a.alloc(model.Tag, if (i % 6 == 0) 1 else if (i % 6 == 1) 3 else 0);
