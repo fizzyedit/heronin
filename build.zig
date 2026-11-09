@@ -55,6 +55,14 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Test models, theme, and public rules");
     const app_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/app_tests.zig"), .target = target, .optimize = optimize }) });
     app_tests.root_module.addImport("model", model);
+    const framework = fizzy.framework(fizzy_dep, .native);
+    const view_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/view_tests.zig"), .target = target, .optimize = optimize }) });
+    view_tests.root_module.addImport("model", model);
+    view_tests.root_module.addImport("dvui", framework.dvui);
+    view_tests.root_module.addImport("core", framework.core);
+    const view_test_run = b.addRunArtifact(view_tests);
+    if (b.graph.host.result.os.tag == .linux) view_test_run.setEnvironmentVariable("SDL_VIDEODRIVER", "offscreen");
+    test_step.dependOn(&view_test_run.step);
     test_step.dependOn(&b.addRunArtifact(app_tests).step);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&checker_test_run.step);

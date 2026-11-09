@@ -61,8 +61,8 @@ fn copy(comptime T: type, a: std.mem.Allocator, values: []const T) ![]T {
 pub fn fmt(comptime format: []const u8, args: anytype) []const u8 {
     return std.fmt.allocPrint(dvui.currentWindow().arena(), format, args) catch unreachable;
 }
-pub fn label(text: []const u8) void {
-    dvui.labelNoFmt(@src(), text, .{}, .{});
+pub fn label(src: std.builtin.SourceLocation, text: []const u8, opts: dvui.Options) void {
+    dvui.labelNoFmt(src, text, .{}, opts);
 }
 pub fn species(text: []const u8) void {
     // TODO(font): Zilla Slab for species names, a later job adds the asset
@@ -124,7 +124,7 @@ pub fn draw(state: *State) void {
             image.deinit();
             species(logic.tileTitle(item));
             const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places);
-            label(fmt("{s}{s}{s}", .{ day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) fmt("{d} guesses", .{item.tags.len}) else place orelse "" }));
+            label(@src(), fmt("{s}{s}{s}", .{ day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) fmt("{d} guesses", .{item.tags.len}) else place orelse "" }), .{});
             contents.deinit();
             if (tile.clicked()) state.open = item.photo.id;
             tile.deinit();

@@ -57,7 +57,7 @@ pub fn pick(queue: *imports.Queue) void {
         }
     };
 }
-pub fn draw(queue: *imports.Queue, state: *lib.State, store: @import("../store.zig").Store) void {
+pub fn draw(queue: *imports.Queue, state: *lib.State, store: @import("../store.zig").Store, current: *@import("tabs.zig").Tab) void {
     queue.step(store);
     if (queue.busy) dvui.refresh(null, @src(), null);
     dvui.labelNoFmt(@src(), "Add photos", .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } });
@@ -69,31 +69,31 @@ pub fn draw(queue: *imports.Queue, state: *lib.State, store: @import("../store.z
             }
         }
     }
-    if (cloud) lib.label("Save photos into the Heronin folder in Google Drive");
-    if (too_many) lib.label("Pick up to 10 photos at a time.");
+    if (cloud) lib.label(@src(), "Save photos into the Heronin folder in Google Drive", .{});
+    if (too_many) lib.label(@src(), "Pick up to 10 photos at a time.", .{});
     const counts = imports.counts(queue.rows.items, state.items);
     if (counts.total == 0) return;
-    lib.label(lib.fmt("Adding {d} photos, {d} done", .{ counts.total, counts.finished }));
+    lib.label(@src(), lib.fmt("Adding {d} photos, {d} done", .{ counts.total, counts.finished }), .{});
     const width = dvui.parentGet().data().rect.w;
     var track = dvui.box(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = 12 }, .background = true, .color_fill = .{ .color = theme.chip } });
     var bar = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = width * @as(f32, @floatFromInt(counts.finished)) / @as(f32, @floatFromInt(counts.total)), .h = 12 }, .background = true, .color_fill = .{ .color = theme.olive[0] } });
     bar.deinit();
     track.deinit();
-    inline for (.{ counts.tagged, counts.review, counts.skipped }, .{ "tagged", "need a look", "not a bird" }, .{ theme.olive[0], theme.mustard[2], theme.chip }, .{ theme.card, theme.ink, theme.brown[0] }) |n, word, fill, ink| {
-        dvui.labelNoFmt(@src(), lib.fmt("{d} {s}", .{ n, word }), .{}, .{ .background = true, .color_fill = .{ .color = fill }, .color_text = .{ .color = ink } });
+    inline for (.{ counts.tagged, counts.review, counts.skipped }, .{ "tagged", "need a look", "not a bird" }, .{ theme.olive[0], theme.mustard[2], theme.chip }, .{ theme.card, theme.ink, theme.brown[0] }, 0..) |n, word, fill, ink, i| {
+        dvui.labelNoFmt(@src(), lib.fmt("{d} {s}", .{ n, word }), .{}, .{ .id_extra = i, .background = true, .color_fill = .{ .color = fill }, .color_text = .{ .color = ink } });
     }
     if (counts.review > 0 and dvui.button(@src(), lib.fmt("Review {d} that need a look", .{counts.review}), .{}, .{ .min_size_content = .{ .h = 44 } })) {
         state.filter = .review;
-        @import("../plugin.zig").current = .library;
+        current.* = .library;
     }
-    lib.label("QUEUE");
+    lib.label(@src(), "QUEUE", .{});
     var scroll = @import("core").widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
     defer scroll.deinit();
     for (queue.rows.items, 0..) |row, i| {
         var box = dvui.box(@src(), .{ .dir = .vertical }, .{ .id_extra = i, .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.washes[i % 6] } });
         defer box.deinit();
-        lib.label(row.name);
-        if (row.err) |err| lib.label(@errorName(err));
+        lib.label(@src(), row.name, .{});
+        if (row.err) |err| lib.label(@src(), @errorName(err), .{});
         if (row.state == .imported) {
             var status: @import("model").Photo.State = .new;
             for (state.items) |item| {

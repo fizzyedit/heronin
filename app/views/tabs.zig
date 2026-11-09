@@ -15,7 +15,7 @@ pub const Tab = enum {
     }
 };
 pub fn draw(current: *Tab) void {
-    var bar = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+    var bar = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .gravity_y = 1, .tag = "heronin-tabs" });
     defer bar.deinit();
     const icons = [_][]const u8{ dvui.entypo.images, dvui.entypo.leaf, dvui.entypo.plus, dvui.entypo.user };
     inline for (@typeInfo(Tab).@"enum".field_names, 0..) |name, i| {

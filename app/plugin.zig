@@ -1,18 +1,17 @@
 const sdk = @import("fizzy_sdk");
 const dvui = @import("dvui");
-const theme = @import("theme.zig");
+const root = @import("views/root.zig");
 const tabs = @import("views/tabs.zig");
 pub const plugin_options = @import("fizzy_plugin_options");
 pub const plugin_id = plugin_options.id;
 var plugin: sdk.Plugin = .{ .state = undefined, .vtable = &.{ .deinit = deinit }, .id = plugin_id, .display_name = plugin_options.name };
 const library = @import("views/library.zig");
-const photo = @import("views/photo.zig");
 var fake: ?@import("fake_store.zig").FakeStore = null;
 var state: library.State = .{};
 const add = @import("views/add.zig");
 var queue: @import("import_queue.zig").Queue = undefined;
 var imported: usize = 0;
-pub var current: tabs.Tab = .library;
+var current: tabs.Tab = .library;
 pub fn register(host: *sdk.Host) !void {
     queue = .{ .allocator = host.allocator };
     plugin.state = @ptrCast(host);
@@ -55,16 +54,6 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         state.requested = true;
         dvui.refresh(null, @src(), null);
     }
-    dvui.themeSet(theme.light(dvui.themeGet()));
-    var page = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .both, .background = true, .color_fill = .{ .color = theme.paper }, .padding = .all(16) });
-    defer page.deinit();
-    {
-        var content = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .both });
-        defer content.deinit();
-        if (current == .library) {
-            if (state.open != null) photo.draw(&state, fake.?.store()) else library.draw(&state);
-        } else if (current == .add) add.draw(&queue, &state, fake.?.store()) else dvui.labelNoFmt(@src(), current.title(), .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } });
-    }
-    tabs.draw(&current);
+    root.draw(&current, &state, &queue, fake.?.store());
     return .ok;
 }
