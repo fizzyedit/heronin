@@ -20,6 +20,7 @@ pub const working: Status = .{ .fill = mustard[0], .ink = ink };
 pub const waiting: Status = .{ .fill = chip, .ink = brown[0] };
 pub const other: Status = .{ .fill = brown[0], .ink = card };
 pub const failed: Status = .{ .fill = brown[0], .ink = card };
+pub const species_face = "Nunito"; // TODO(font): Zilla Slab for species names, a later job adds the asset
 pub const body_face = "Nunito";
 pub const title_face = "Nunito";
 fn c(hex: u24) Color {
