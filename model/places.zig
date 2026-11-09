@@ -26,3 +26,29 @@ pub fn placeLabel(photo: model.Photo, saved: []const model.Place) ?[]const u8 {
     const point = photo.place orelse return null;
     return if (namedPlace(point, saved)) |place| place.name else "Unnamed place";
 }
+
+pub const Source = enum { photo, nearby, phone };
+pub const Located = struct { lat: f64, lon: f64, src: Source };
+pub fn placeOf(photo: model.Photo, others: []const model.Photo) ?Located {
+    if (photo.place) |p| return .{ .lat = p.lat, .lon = p.lon, .src = .photo };
+    const at = photo.taken_at orelse return null;
+    var nearest: ?model.Photo = null;
+    var best: u128 = 601;
+    for (others) |other| {
+        if (other.place == null) continue;
+        const time = other.taken_at orelse continue;
+        const delta = @abs(@as(i128, at) - time);
+        if (delta < best or (delta == best and nearest != null and time < nearest.?.taken_at.?)) {
+            nearest = other;
+            best = delta;
+        }
+    }
+    if (nearest) |other| {
+        const p = other.place.?;
+        return .{ .lat = p.lat, .lon = p.lon, .src = .nearby };
+    }
+    if (photo.fix) |fix| {
+        if (fix.accuracy_m <= 200 and @abs(@as(i128, at) - fix.at) <= 1800) return .{ .lat = fix.lat, .lon = fix.lon, .src = .phone };
+    }
+    return null;
+}

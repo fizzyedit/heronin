@@ -75,3 +75,41 @@ test "species table contains twelve unique species available through find" {
     try std.testing.expectEqualStrings("Pandion haliaetus", species.find("osprey").?.scientific);
     try std.testing.expectEqual(null, species.find("unknown"));
 }
+
+test "placeOf prefers own GPS, then nearest own neighbour GPS, then an accurate timely fix" {
+    var p = photo();
+    try std.testing.expectEqual(null, places.placeOf(p, &.{}));
+    p.taken_at = 10_000;
+    p.fix = .{ .lat = 3, .lon = 4, .accuracy_m = 20, .at = 8_800 };
+    var near = photo();
+    near.place = .{ .lat = 1, .lon = 2 };
+    near.taken_at = 10_540;
+    p.place = .{ .lat = 5, .lon = 6 };
+    try std.testing.expectEqualDeep(places.Located{ .lat = 5, .lon = 6, .src = .photo }, places.placeOf(p, &.{near}).?);
+    p.place = null;
+    try std.testing.expectEqualDeep(places.Located{ .lat = 1, .lon = 2, .src = .nearby }, places.placeOf(p, &.{near}).?);
+    near.taken_at = 10_660;
+    try std.testing.expectEqual(places.Source.phone, places.placeOf(p, &.{near}).?.src);
+    var earlier = near;
+    earlier.taken_at = 9_900;
+    earlier.place = .{ .lat = 7, .lon = 8 };
+    near.taken_at = 10_200;
+    try std.testing.expectEqual(@as(f64, 7), places.placeOf(p, &.{ near, earlier }).?.lat);
+    near.taken_at = 10_100;
+    try std.testing.expectEqual(@as(f64, 7), places.placeOf(p, &.{ near, earlier }).?.lat);
+    try std.testing.expectEqual(@as(f64, 7), places.placeOf(p, &.{ earlier, near }).?.lat);
+    earlier.place = null;
+    earlier.fix = p.fix;
+    try std.testing.expectEqual(@as(f64, 1), places.placeOf(p, &.{ earlier, near }).?.lat);
+    try std.testing.expectEqual(places.Source.phone, places.placeOf(p, &.{earlier}).?.src);
+    p.fix.?.at = 7_600;
+    try std.testing.expectEqual(null, places.placeOf(p, &.{}));
+    p.fix.?.at = 8_800;
+    p.fix.?.accuracy_m = 500;
+    try std.testing.expectEqual(null, places.placeOf(p, &.{}));
+    p.fix.?.accuracy_m = 20;
+    p.taken_at = null;
+    try std.testing.expectEqual(null, places.placeOf(p, &.{near}));
+    p.place = .{ .lat = 5, .lon = 6 };
+    try std.testing.expectEqual(places.Source.photo, places.placeOf(p, &.{near}).?.src);
+}

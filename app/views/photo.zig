@@ -40,9 +40,10 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         if (dvui.button(@src(), "Confirm", .{}, .{ .min_size_content = .{ .h = 44 } })) {
             var accepted = tag;
             accepted.accepted = .person;
-            store.setTags(item.photo.id, &.{accepted}, null, done);
+            store.setTags(item.photo.id, &.{accepted}, .tagged, null, done);
             const kept = state.arena.allocator().dupe(model.Tag, &.{accepted}) catch return;
             item.tags = kept;
+            item.photo.state = .tagged;
         }
         dvui.labelNoFmt(@src(), "Change species", .{}, .{ .min_size_content = .{ .h = 44 }, .background = true, .color_fill = .{ .color = theme.chip }, .color_text = .{ .color = theme.tab_off_ink }, .border = .all(2) });
         lib.label("Other guesses");

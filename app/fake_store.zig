@@ -3,13 +3,16 @@ const model = @import("model");
 const api = @import("store.zig");
 pub const FakeStore = struct {
     arena: std.heap.ArenaAllocator,
+    answers: [2]std.heap.ArenaAllocator,
+    live: u1 = 0,
+    imports: usize = 0,
     items: []api.Item,
     saved: []const model.Place,
     head: ?*Answer = null,
     tail: ?*Answer = null,
     const Answer = struct { next: ?*Answer = null, deliver: *const fn (*Answer) void };
     pub fn init(allocator: std.mem.Allocator) !FakeStore {
-        var self: FakeStore = .{ .arena = .init(allocator), .items = undefined, .saved = undefined };
+        var self: FakeStore = .{ .arena = .init(allocator), .answers = .{ .init(allocator), .init(allocator) }, .items = undefined, .saved = undefined };
         errdefer self.arena.deinit();
         const a = self.arena.allocator();
         self.items = try a.alloc(api.Item, 60);
@@ -65,6 +68,7 @@ pub const FakeStore = struct {
     }
     pub fn deinit(self: *FakeStore) void {
         self.arena.deinit();
+        for (&self.answers) |*arena| arena.deinit();
     }
     pub fn store(self: *FakeStore) api.Store {
         return .{ .ptr = self, .vtable = &.{ .list = list, .thumbnail = thumbnail, .importFile = importFile, .setTags = setTags, .setFavorite = setFavorite, .places = places, .pump = pump } };
@@ -87,7 +91,7 @@ pub const FakeStore = struct {
                 node.done(node.ctx, node.result);
             }
         };
-        const node = self.arena.allocator().create(Node) catch @panic("FakeStore answer queue exhausted");
+        const node = self.answers[self.live].allocator().create(Node) catch @panic("FakeStore answer queue exhausted");
         node.* = .{ .ctx = ctx, .done = done, .result = result };
         if (self.tail) |tail| tail.next = &node.base else self.head = &node.base;
         self.tail = &node.base;
@@ -102,10 +106,22 @@ pub const FakeStore = struct {
         const i = self.index(id) orelse return self.answer(api.Thumbnail, ctx, done, error.NotFound);
         self.answer(api.Thumbnail, ctx, done, .{ .wash = self.items[i].photo.md5.bytes[0] % 6 });
     }
-    fn importFile(ptr: *anyopaque, _: []const u8, _: []const u8, ctx: ?*anyopaque, done: api.Done(model.Photo)) void {
-        cast(ptr).answer(model.Photo, ctx, done, error.Unsupported);
+    fn importFile(ptr: *anyopaque, name: []const u8, bytes: []const u8, ctx: ?*anyopaque, done: api.Done(api.Imported)) void {
+        const self = cast(ptr);
+        var md5: model.Md5 = undefined;
+        std.crypto.hash.Md5.hash(bytes, &md5.bytes, .{});
+        for (self.items) |item| if (std.mem.eql(u8, &item.photo.md5.bytes, &md5.bytes)) return self.answer(api.Imported, ctx, done, .{ .photo = item.photo, .new = false });
+        const a = self.arena.allocator();
+        const items = a.alloc(api.Item, self.items.len + 1) catch return self.answer(api.Imported, ctx, done, error.OutOfMemory);
+        const id = std.fmt.allocPrint(a, "imp-{d:0>3}", .{self.imports}) catch return self.answer(api.Imported, ctx, done, error.OutOfMemory);
+        const copy = a.dupe(u8, name) catch return self.answer(api.Imported, ctx, done, error.OutOfMemory);
+        items[0] = .{ .photo = .{ .id = id, .name = copy, .md5 = md5, .bytes = bytes.len, .w = 4000, .h = 3000 }, .tags = &.{} };
+        @memcpy(items[1..], self.items);
+        self.items = items;
+        self.imports += 1;
+        self.answer(api.Imported, ctx, done, .{ .photo = items[0].photo, .new = true });
     }
-    fn setTags(ptr: *anyopaque, id: []const u8, tags: []const model.Tag, ctx: ?*anyopaque, done: api.Done(void)) void {
+    fn setTags(ptr: *anyopaque, id: []const u8, tags: []const model.Tag, state: model.Photo.State, ctx: ?*anyopaque, done: api.Done(void)) void {
         const self = cast(ptr);
         const i = self.index(id) orelse return self.answer(void, ctx, done, error.NotFound);
         const a = self.arena.allocator();
@@ -117,6 +133,7 @@ pub const FakeStore = struct {
             if (tag.note) |s| tag.note = a.dupe(u8, s) catch return self.answer(void, ctx, done, error.OutOfMemory);
         }
         self.items[i].tags = copy;
+        self.items[i].photo.state = state;
         self.answer(void, ctx, done, {});
     }
     fn setFavorite(ptr: *anyopaque, id: []const u8, on: bool, ctx: ?*anyopaque, done: api.Done(void)) void {
@@ -129,8 +146,12 @@ pub const FakeStore = struct {
         const self = cast(ptr);
         self.answer([]const model.Place, ctx, done, self.saved);
     }
+    /// Not reentrant; callbacks may queue answers for the next pump.
     fn pump(ptr: *anyopaque) void {
         const self = cast(ptr);
+        const detached = self.live;
+        self.live ^= 1;
+        defer _ = self.answers[detached].reset(.retain_capacity);
         var next = self.head;
         self.head = null;
         self.tail = null;
