@@ -14,7 +14,8 @@ pub fn draw(state: *lib.State, store: api.Store) void {
     var index: usize = 0;
     while (!std.mem.eql(u8, state.items[index].photo.id, state.open.?)) : (index += 1) {}
     const item = &state.items[index];
-    const place = model.places.placeLabel(item.photo, state.places);
+    const located = model.places.placeOf(item.photo, state.photos);
+    const place = lib.logic.placeText(located, state.places);
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
     defer scroll.deinit();
     lib.label(lib.fmt("{s}{s}{s}", .{ lib.day(item.photo), if (place != null) " · " else "", place orelse "" }));
@@ -25,7 +26,7 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         var image = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = width, .h = height }, .background = true, .color_fill = .{ .color = theme.washes[state.washes[index]] } });
         if (tag.box) |box| {
             var outline = dvui.box(@src(), .{}, .{ .rect = .{ .x = width * box.x, .y = height * box.y, .w = width * box.w, .h = height * box.h }, .border = .all(2), .color_border = .{ .color = theme.red[0] } });
-            lib.label("bird found");
+            dvui.labelNoFmt(@src(), "bird found", .{}, .{ .font = dvui.Font.theme(.body).withSize(12) });
             outline.deinit();
         }
         image.deinit();
@@ -50,7 +51,11 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         for (item.tags[1..]) |guess| lib.label(lib.fmt("{s}  {d} percent", .{ lib.logic.common(guess), @as(u32, @intFromFloat(@round(guess.confidence * 100))) }));
     } else lib.badge(item.photo.state);
     lib.label(lib.fmt("Seen: {s}", .{lib.day(item.photo)}));
-    lib.label(lib.fmt("Place: {s}{s}", .{ place orelse "No place", if (place != null) " (from the photo)" else "" }));
+    lib.label(lib.fmt("Place: {s}{s}", .{ place orelse "No place", if (located) |point| switch (point.src) {
+        .photo => " (from the photo)",
+        .nearby => " (from a photo taken nearby)",
+        .phone => " (from your phone at import)",
+    } else "" }));
     lib.label(lib.fmt("Camera: {s}", .{item.photo.camera orelse "Unknown"}));
     var seen: usize = 0;
     if (item.tags.len > 0) for (state.items, 0..) |other, i| {

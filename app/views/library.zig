@@ -11,8 +11,22 @@ pub const State = struct {
     places: []model.Place = &.{},
     washes: [60]u8 = @splat(0),
     requested: bool = false,
+    stale: bool = false,
+    photos: []model.Photo = &.{},
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
+    pub fn reload(self: *State, store: api.Store) void {
+        std.debug.assert(self.open == null);
+        _ = self.arena.reset(.retain_capacity);
+        self.items = &.{};
+        self.places = &.{};
+        self.photos = &.{};
+        self.requested = false;
+        self.stale = false;
+        dvui.refresh(null, @src(), null);
+        store.list(null, 60, self, listed);
+        store.places(self, placed);
+    }
     pub fn thumbnail(ctx: ?*anyopaque, result: api.Error!api.Thumbnail) void {
         const wash: *u8 = @ptrCast(ctx.?);
         wash.* = switch (result catch return) {
@@ -23,6 +37,8 @@ pub const State = struct {
     pub fn listed(ctx: ?*anyopaque, result: api.Error![]const api.Item) void {
         const self: *State = @ptrCast(@alignCast(ctx.?));
         self.items = copy(api.Item, self.arena.allocator(), result catch return) catch return;
+        self.photos = self.arena.allocator().alloc(model.Photo, self.items.len) catch return;
+        for (self.items, self.photos) |item, *photo| photo.* = item.photo;
     }
     pub fn placed(ctx: ?*anyopaque, result: api.Error![]const model.Place) void {
         const self: *State = @ptrCast(@alignCast(ctx.?));
@@ -106,7 +122,7 @@ pub fn draw(state: *State) void {
             badge(item.photo.state);
             image.deinit();
             species(logic.tileTitle(item));
-            const place = model.places.placeLabel(item.photo, state.places);
+            const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places);
             label(fmt("{s}{s}{s}", .{ day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) fmt("{d} guesses", .{item.tags.len}) else place orelse "" }));
             contents.deinit();
             if (tile.clicked()) state.open = item.photo.id;

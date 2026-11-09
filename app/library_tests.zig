@@ -43,3 +43,10 @@ test "shortest column and leftmost ties" {
     logic.placeTiles(&.{ 2, 2, 2, 2 }, &columns, out[0..4]);
     try std.testing.expectEqualSlices(usize, &.{ 0, 1, 0, 1 }, out[0..4]);
 }
+test "place text uses saved radius and preserves absent location" {
+    const model = @import("model");
+    const saved = [_]model.Place{.{ .id = 1, .name = "Garden", .lat = 0, .lon = 0, .radius_m = 100 }};
+    try expectEqualStrings("Garden", logic.placeText(.{ .lat = 0.0001, .lon = 0, .src = .photo }, &saved).?);
+    try expectEqualStrings("Unnamed place", logic.placeText(.{ .lat = 1, .lon = 0, .src = .nearby }, &saved).?);
+    try std.testing.expect(logic.placeText(null, &saved) == null);
+}

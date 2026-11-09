@@ -44,3 +44,8 @@ pub fn placeTiles(heights: []const f32, columns: []f32, out: []usize) void {
         columns[shortest] += height;
     }
 }
+
+pub fn placeText(located: ?model.places.Located, saved: []const model.Place) ?[]const u8 {
+    const point = located orelse return null;
+    return if (model.places.namedPlace(point, saved)) |place| place.name else "Unnamed place";
+}

@@ -9,7 +9,9 @@ const library = @import("views/library.zig");
 const photo = @import("views/photo.zig");
 var fake: ?@import("fake_store.zig").FakeStore = null;
 var state: library.State = .{};
-var current: tabs.Tab = .library;
+const add = @import("views/add.zig");
+var queue: @import("import_queue.zig").Queue = .{ .allocator = @import("std").heap.page_allocator };
+pub var current: tabs.Tab = .library;
 pub fn register(host: *sdk.Host) !void {
     plugin.state = @ptrCast(host);
     try host.registerPlugin(&plugin);
@@ -18,6 +20,9 @@ pub fn register(host: *sdk.Host) !void {
 fn deinit(_: *anyopaque) void {
     if (fake) |*f| f.deinit();
     fake = null;
+    for (queue.rows.items) |row| queue.allocator.free(row.name);
+    queue.deinit();
+    queue = .{ .allocator = @import("std").heap.page_allocator };
     state.arena.deinit();
     state = .{};
     current = .library;
@@ -28,7 +33,15 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         fake.?.store().list(null, 60, &state, library.State.listed);
         fake.?.store().places(&state, library.State.placed);
     }
+    add.pick(&queue);
+    const importing = queue.busy;
     fake.?.store().pump();
+    if (importing and !queue.busy and queue.rows.items[queue.active].state == .imported) {
+        state.stale = true;
+        dvui.refresh(null, @src(), null);
+        fake.?.store().list(null, 60, &state, library.State.listed);
+    }
+    if (current == .library and state.open == null and state.stale) state.reload(fake.?.store());
     if (!state.requested and state.items.len > 0) {
         for (state.items, 0..) |item, i| fake.?.store().thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
         state.requested = true;
@@ -42,7 +55,7 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         defer content.deinit();
         if (current == .library) {
             if (state.open != null) photo.draw(&state, fake.?.store()) else library.draw(&state);
-        } else dvui.labelNoFmt(@src(), current.title(), .{}, .{});
+        } else if (current == .add) add.draw(&queue, &state, fake.?.store()) else dvui.labelNoFmt(@src(), current.title(), .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } });
     }
     tabs.draw(&current);
     return .ok;
