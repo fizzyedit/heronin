@@ -126,7 +126,7 @@ test "mutations, errors, and FIFO delivery" {
     var second: Reply(void) = .{};
     store.setFavorite("fake-01", true, &first, @TypeOf(first).done);
     var tags = [_]model.Tag{.{ .species = "osprey", .confidence = 1, .source = .person, .accepted = .person, .at = 42, .model = "" }};
-    store.setTags("fake-01", &tags, &second, @TypeOf(second).done);
+    store.setTags("fake-01", &tags, .tagged, &second, @TypeOf(second).done);
     try expect(first.result == null and second.result == null);
     store.pump();
     try first.result.?;
@@ -137,10 +137,11 @@ test "mutations, errors, and FIFO delivery" {
     store.pump();
     for (try reply.result.?) |item| if (std.mem.eql(u8, item.photo.id, "fake-01")) {
         try expect(item.photo.favorite);
+        try eq(model.Photo.State.tagged, item.photo.state);
         try std.testing.expectEqualStrings("osprey", item.tags[0].species);
     };
     var bad: Reply(void) = .{};
-    store.setTags("missing", &.{}, &bad, @TypeOf(bad).done);
+    store.setTags("missing", &.{}, .tagged, &bad, @TypeOf(bad).done);
     try expect(bad.result == null);
     store.pump();
     try std.testing.expectError(error.NotFound, bad.result.?);
@@ -156,11 +157,22 @@ test "mutations, errors, and FIFO delivery" {
     store.thumbnail("missing", 1, &thumb, @TypeOf(thumb).done);
     store.pump();
     try std.testing.expectError(error.NotFound, thumb.result.?);
-    var imported: Reply(model.Photo) = .{};
+    var imported: Reply(api.Imported) = .{};
     store.importFile("a.jpg", "bytes", &imported, @TypeOf(imported).done);
     try expect(imported.result == null);
     store.pump();
-    try std.testing.expectError(error.Unsupported, imported.result.?);
+    const first_import = try imported.result.?;
+    try expect(first_import.new);
+    var listed: Reply([]const api.Item) = .{};
+    store.list(null, 1, &listed, @TypeOf(listed).done);
+    store.pump();
+    try std.testing.expectEqualStrings(first_import.photo.id, (try listed.result.?)[0].photo.id);
+    try std.testing.expectEqualStrings("a.jpg", (try listed.result.?)[0].photo.name);
+    imported = .{};
+    store.importFile("another.jpg", "bytes", &imported, @TypeOf(imported).done);
+    store.pump();
+    try expect(!(try imported.result.?).new);
+    try std.testing.expectEqualStrings(first_import.photo.id, (try imported.result.?).photo.id);
     const Order = struct {
         count: usize = 0,
         fn done(ctx: ?*anyopaque, result: api.Error!api.Thumbnail) void {
@@ -176,4 +188,25 @@ test "mutations, errors, and FIFO delivery" {
     try eq(@as(usize, 0), order.count);
     store.pump();
     try eq(@as(usize, 2), order.count);
+}
+
+test "callbacks can enqueue answers for the next pump" {
+    var fake = try FakeStore.init(std.testing.allocator);
+    defer fake.deinit();
+    const Chain = struct {
+        store: api.Store,
+        count: usize = 0,
+        fn done(ctx: ?*anyopaque, result: api.Error!api.Thumbnail) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            _ = result catch unreachable;
+            self.count += 1;
+            if (self.count < 3) self.store.thumbnail("fake-00", 1, self, done);
+        }
+    };
+    var chain: Chain = .{ .store = fake.store() };
+    chain.store.thumbnail("fake-00", 1, &chain, Chain.done);
+    for (1..4) |n| {
+        chain.store.pump();
+        try eq(n, chain.count);
+    }
 }
