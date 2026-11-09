@@ -79,7 +79,7 @@ pub const FakeStore = struct {
             done: api.Done(T),
             result: api.Error!T,
             fn deliver(base: *Answer) void {
-                const node: *@This() = @fieldParentPtr("base", base);
+                const node: *@This() = @alignCast(@fieldParentPtr("base", base));
                 node.done(node.ctx, node.result);
             }
         };
