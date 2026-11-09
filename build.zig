@@ -55,6 +55,32 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Test models, theme, and public rules");
     const app_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/app_tests.zig"), .target = target, .optimize = optimize }) });
     app_tests.root_module.addImport("model", model);
+    // Match fizzy's headless UI tests: layout and widget checks need no SDL or GPU.
+    const testing_dvui = fizzy_dep.builder.dependency("fizzy_sdk", .{}).builder.dependency("dvui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .testing,
+    }).module("dvui_testing");
+    const native_core = fizzy.framework(fizzy_dep, .native).core;
+    const testing_core = b.createModule(.{ .root_source_file = native_core.root_source_file, .target = target, .optimize = optimize });
+    var core_imports = native_core.import_table.iterator();
+    while (core_imports.next()) |entry| testing_core.addImport(entry.key_ptr.*, entry.value_ptr.*);
+    testing_core.addImport("dvui", testing_dvui);
+    // These core dependencies also carry dvui types; keep the test graph on one backend.
+    for ([_][]const u8{ "glass", "replay" }) |name| {
+        const original = native_core.import_table.get(name).?;
+        const headless = b.createModule(.{ .root_source_file = original.root_source_file, .target = target, .optimize = optimize });
+        var deps = original.import_table.iterator();
+        while (deps.next()) |entry| headless.addImport(entry.key_ptr.*, entry.value_ptr.*);
+        headless.addImport("dvui", testing_dvui);
+        testing_core.addImport(name, headless);
+    }
+    const view_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/view_tests.zig"), .target = target, .optimize = optimize }) });
+    view_tests.root_module.addImport("model", model);
+    view_tests.root_module.addImport("dvui", testing_dvui);
+    view_tests.root_module.addImport("core", testing_core);
+    const view_test_run = b.addRunArtifact(view_tests);
+    test_step.dependOn(&view_test_run.step);
     test_step.dependOn(&b.addRunArtifact(app_tests).step);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&checker_test_run.step);
