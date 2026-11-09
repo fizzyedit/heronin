@@ -1,5 +1,5 @@
 const std = @import("std");
-const Rule = enum { image, fixture_size, server, credentials, jsonl, env, hostname, address, anthropic, oauth, client_secret, bearer };
+const Rule = enum { image, fixture_size, server, credentials, jsonl, env, hostname, address, anthropic, oauth, client_secret, bearer, coords };
 
 fn image(path: []const u8, data: []const u8) bool {
     const ext = std.fs.path.extension(path);
@@ -12,6 +12,54 @@ fn image(path: []const u8, data: []const u8) bool {
 
 fn token(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "-._~+/=", c) != null;
+}
+
+const Decimal = struct { end: usize, value: f64 };
+
+fn decimal(data: []const u8, start: usize) ?Decimal {
+    if (start > 0 and (std.ascii.isDigit(data[start - 1]) or data[start - 1] == '.')) return null;
+    var end = start;
+    if (data[end] == '-') end += 1;
+    const whole = end;
+    while (end < data.len and std.ascii.isDigit(data[end])) : (end += 1) {}
+    if (end - whole < 1 or end - whole > 3 or end == data.len or data[end] != '.') return null;
+    end += 1;
+    const fraction = end;
+    while (end < data.len and std.ascii.isDigit(data[end])) : (end += 1) {}
+    if (end - fraction < 3) return null;
+    return .{ .end = end, .value = std.fmt.parseFloat(f64, data[start..end]) catch return null };
+}
+
+fn coords(data: []const u8) bool {
+    var previous: ?Decimal = null;
+    var i: usize = 0;
+    while (i < data.len) {
+        if (decimal(data, i)) |current| {
+            if (previous) |a| {
+                const lat = a.value;
+                const lon = current.value;
+                if (i - a.end <= 16 and @abs(lat) <= 90 and @abs(lon) <= 180) {
+                    var fake = false;
+                    for ([_]struct { lat: f64, lon: f64 }{
+                        .{ .lat = 0, .lon = 0 },
+                        .{ .lat = 60, .lon = -30 },
+                        .{ .lat = 0, .lon = 180 },
+                    }) |p| {
+                        const dlon = @abs(@mod(lon - p.lon + 540.0, 360.0) - 180.0);
+                        if (@abs(lat - p.lat) <= 1 and dlon <= 1) fake = true;
+                    }
+                    if (!fake) return true;
+                }
+            }
+            previous = current;
+            i = current.end;
+        } else {
+            // A digit in the separator disqualifies the preceding decimal.
+            if (std.ascii.isDigit(data[i])) previous = null;
+            i += 1;
+        }
+    }
+    return false;
 }
 
 fn violation(path: []const u8, data: []const u8) ?Rule {
@@ -67,6 +115,7 @@ fn violation(path: []const u8, data: []const u8) ?Rule {
             }
         }
     }
+    if (coords(data)) return .coords;
     return null;
 }
 

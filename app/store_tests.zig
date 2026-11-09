@@ -66,11 +66,15 @@ test "deferred pages cover the exact generated fixture and places" {
             try eq(i % 4 == 3, p.place == null);
             if (p.place) |point| {
                 const offset = @as(f64, @floatFromInt(i % 10)) * 0.0003;
-                try eq((if (i % 3 == 1) @as(f64, 60.0105) else 0.0105) + offset, point.lat);
+                const marsh_lat: f64 = 60.0105;
+                const origin_lat: f64 = 0.0105;
+                const east_lon: f64 = 179.9995;
+                const west_lon: f64 = -179.9995;
+                try eq((if (i % 3 == 1) marsh_lat else origin_lat) + offset, point.lat);
                 try eq(switch (i % 3) {
                     0 => 0.0105 + offset,
                     1 => -29.9895 + offset,
-                    else => if (i % 2 == 0) @as(f64, 179.9995) else -179.9995,
+                    else => if (i % 2 == 0) east_lon else west_lon,
                 }, point.lon);
                 try std.testing.expectEqualStrings(([_][]const u8{ "Backyard", "Marsh trail", "Unnamed place" })[i % 3], model.places.placeLabel(p, places).?);
             } else missing += 1;
