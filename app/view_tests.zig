@@ -53,6 +53,9 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
     state.segment = .not_yet;
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-tabs");
+    state.segment = .by_place;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-tabs");
     current = .add;
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-tabs");
@@ -232,4 +235,64 @@ test "Seen row opens only its counted photos and its chip returns to All" {
     try std.testing.expectEqual(.all, state.filter);
     try std.testing.expect(state.species == null);
     for (state.items, 0..) |_, i| try std.testing.expect(dvui.tagGet(library.fmt("tile-title-{d}", .{i})) != null);
+}
+
+test "By place rows select only their member species and clear on places reload" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    current = .species;
+    state.segment = .by_place;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-place-0");
+    _ = try dvui.testing.step(placeChecksFrame);
+    try tap("heronin-place-0");
+    try std.testing.expectEqual(@as(?usize, 0), state.at_cluster);
+    try std.testing.expectEqual(.seen, state.segment);
+    try dvui.testing.expectVisible("heronin-place-chip");
+    try tap("heronin-place-chip");
+    try std.testing.expectEqual(null, state.at_cluster);
+    state.at_cluster = 0;
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    try std.testing.expectEqual(null, state.at_cluster);
+}
+
+fn placeChecksFrame() !dvui.App.Result {
+    _ = try frame();
+    const view = @import("views/places.zig");
+    const model = @import("model");
+    const groups = view.groups(&state);
+    var named_species: usize = 0;
+    for (groups.clusters) |c| {
+        const entries = groups.entries(&state, c);
+        var photos: u32 = 0;
+        for (entries) |e| {
+            photos += e.count;
+            if (c.place != null) {
+                try std.testing.expect(view.matches(groups, &state, e.species.code, view.name(&state, c)));
+                named_species += 1;
+            }
+            var expected: u32 = 0;
+            for (c.members) |m| {
+                const item = state.items[groups.items[m]];
+                if (model.life_list.counted(item.photo, item.tags)) |sp| {
+                    if (std.mem.eql(u8, sp.code, e.species.code)) expected += 1;
+                }
+            }
+            try std.testing.expectEqual(expected, e.count);
+        }
+        try std.testing.expect(photos <= c.count);
+    }
+    try std.testing.expect(named_species > 0);
+    try std.testing.expect(!view.matches(groups, &state, "grbher3", "Unnamed place"));
+    return .ok;
 }
