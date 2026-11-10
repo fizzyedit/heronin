@@ -19,6 +19,9 @@ pub fn build(b: *std.Build) !void {
     const model = b.addModule("model", .{ .root_source_file = b.path("model/model.zig"), .target = target, .optimize = optimize });
     const app = b.createModule(.{ .root_source_file = b.path("app/plugin.zig"), .target = target, .optimize = optimize });
     app.addImport("model", model);
+    const wire = b.addModule("wire", .{ .root_source_file = b.path("server/tagger.zig"), .target = target, .optimize = optimize });
+    wire.addImport("model", model);
+    app.addImport("wire", wire);
     app.addAnonymousImport("plugin_zon", .{ .root_source_file = b.path("app/plugin.zig.zon") });
     app.addOptions(fizzy.plugin.plugin_options_import, fizzy.plugin.pluginOptions(b, "heronin", "Heronin", "0.1.0", "", manifest));
     const built = try fizzy.addApp(fizzy_dep, &.{ fizzy.plugins.workbench, .{ .name = "heronin", .module = app } });
@@ -55,6 +58,7 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Test models, theme, and public rules");
     const app_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/app_tests.zig"), .target = target, .optimize = optimize }) });
     app_tests.root_module.addImport("model", model);
+    app_tests.root_module.addImport("wire", wire);
     // Match fizzy's headless UI tests: layout and widget checks need no SDL or GPU.
     const testing_dvui = fizzy_dep.builder.dependency("fizzy_sdk", .{}).builder.dependency("dvui", .{
         .target = target,
@@ -76,7 +80,10 @@ pub fn build(b: *std.Build) !void {
         testing_core.addImport(name, headless);
     }
     const view_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/view_tests.zig"), .target = target, .optimize = optimize }) });
+    app_tests.root_module.addImport("dvui", testing_dvui);
+    app_tests.root_module.addImport("core", testing_core);
     view_tests.root_module.addImport("model", model);
+    view_tests.root_module.addImport("wire", wire);
     view_tests.root_module.addImport("dvui", testing_dvui);
     view_tests.root_module.addImport("core", testing_core);
     const view_test_run = b.addRunArtifact(view_tests);

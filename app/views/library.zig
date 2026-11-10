@@ -15,6 +15,12 @@ pub const State = struct {
     photos: []model.Photo = &.{},
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
+    tag_queue: ?*@import("../tag_queue.zig").TagQueue = null,
+    pub fn reloadBetweenJobs(self: *State, store: api.Store, busy: bool, in_library: bool) bool {
+        if (busy or !in_library or self.open != null or !self.stale) return false;
+        self.reload(store);
+        return true;
+    }
     pub fn reload(self: *State, store: api.Store) void {
         std.debug.assert(self.open == null);
         _ = self.arena.reset(.retain_capacity);

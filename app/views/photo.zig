@@ -48,8 +48,23 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         }
         dvui.labelNoFmt(@src(), "Change species", .{}, .{ .min_size_content = .{ .h = 44 }, .background = true, .color_fill = .{ .color = theme.chip }, .color_text = .{ .color = theme.tab_off_ink }, .border = .all(2) });
         lib.label(@src(), "Other guesses", .{});
-        for (item.tags[1..], 1..) |guess, i| lib.label(@src(), lib.fmt("{s}  {d} percent", .{ lib.logic.common(guess), @as(u32, @intFromFloat(@round(guess.confidence * 100))) }), .{ .id_extra = i });
+        for (item.tags[1..], 1..) |guess, i| {
+            if (dvui.button(@src(), lib.fmt("{s}  {d} percent", .{ lib.logic.common(guess), @as(u32, @intFromFloat(@round(guess.confidence * 100))) }), .{}, .{ .id_extra = i, .min_size_content = .{ .h = 44 } })) {
+                const kept = state.arena.allocator().dupe(model.Tag, item.tags) catch return;
+                kept[i] = kept[0];
+                kept[0] = guess;
+                kept[0].accepted = .person;
+                item.tags = kept;
+                item.photo.state = .tagged;
+                store.setTags(item.photo.id, kept, .tagged, null, done);
+            }
+        }
     } else lib.badge(item.photo.state);
+    if (item.photo.state == .new or item.photo.state == .failed) {
+        if (dvui.button(@src(), "Tag this", .{}, .{ .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = theme.orange[0] } })) {
+            if (state.tag_queue) |q| q.ask(item.photo.id);
+        }
+    }
     lib.label(@src(), lib.fmt("Seen: {s}", .{lib.day(item.photo)}), .{});
     lib.label(@src(), lib.fmt("Place: {s}{s}", .{ place orelse "No place", if (located) |point| switch (point.src) {
         .photo => " (from the photo)",
