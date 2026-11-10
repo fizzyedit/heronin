@@ -26,11 +26,11 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         var image = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = width, .h = height }, .background = true, .color_fill = .{ .color = theme.washes[state.washes[index]] } });
         if (tag.box) |box| {
             var outline = dvui.box(@src(), .{}, .{ .rect = .{ .x = width * box.x, .y = height * box.y, .w = width * box.w, .h = height * box.h }, .border = .all(2), .color_border = .{ .color = theme.red[0] } });
-            dvui.labelNoFmt(@src(), "bird found", .{}, .{ .font = dvui.Font.theme(.body).withSize(12) });
+            dvui.labelNoFmt(@src(), "bird found", .{}, .{ .font = dvui.Font.theme(.body).withSize(theme.size.small) });
             outline.deinit();
         }
         image.deinit();
-        lib.species(lib.logic.common(tag));
+        lib.species(lib.logic.common(tag), theme.size.species);
         lib.label(@src(), lib.fmt("{s}{s}{s}", .{ if (model.species.find(tag.species)) |s| s.scientific else "Unknown species", if (tag.detail != null) " · " else "", tag.detail orelse "" }), .{});
         lib.badge(item.photo.state);
         lib.label(@src(), lib.fmt("Agent's confidence {d} percent", .{@as(u32, @intFromFloat(@round(tag.confidence * 100)))}), .{});

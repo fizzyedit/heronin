@@ -46,3 +46,55 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-tabs");
 }
+
+const theme = @import("theme.zig");
+var check_library_text = false;
+fn readableFrame() !dvui.App.Result {
+    _ = try frame();
+    if (check_library_text) {
+        for (state.items, 0..) |item, i| {
+            const title = try dvui.testing.tagGet(library.fmt("tile-title-{d}", .{i}));
+            try expectTextFits(library.logic.tileTitle(item), .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), title.rect);
+            const place = library.logic.placeText(@import("model").places.placeOf(item.photo, state.photos), state.places);
+            const text = library.fmt("{s}{s}{s}", .{ library.day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) library.fmt("{d} guesses", .{item.tags.len}) else place orelse "" });
+            const meta = try dvui.testing.tagGet(library.fmt("tile-place-{d}", .{i}));
+            try expectTextFits(text, dvui.Font.theme(.body).withSize(theme.size.meta), meta.rect);
+        }
+        const favorites = try dvui.testing.tagGet("Favorites");
+        try std.testing.expect(favorites.rect.x >= 0 and favorites.rect.y >= 0);
+        try std.testing.expect(favorites.rect.x + favorites.rect.w <= 390 * dvui.parentGet().screenRectScale(.{}).s);
+        try std.testing.expect(favorites.rect.y + favorites.rect.h <= 844 * dvui.parentGet().screenRectScale(.{}).s);
+        try dvui.testing.expectVisible("Favorites");
+    }
+    return .ok;
+}
+fn expectTextFits(text: []const u8, font: dvui.Font, rect: dvui.Rect.Physical) !void {
+    // Measure the complete text, including anything a LabelWidget would
+    // replace with ellipsis. Wrapped text must have room for all its glyphs.
+    const measured = font.textSize(text);
+    const scale = dvui.parentGet().screenRectScale(.{}).s;
+    const width = rect.w / scale;
+    const height = rect.h / scale;
+    try std.testing.expect(rect.w > 0);
+    const rows = @max(1, @floor((height + 0.5) / font.textSize("").h));
+    try std.testing.expect(measured.w <= width * rows + 0.5);
+}
+test "library text wraps and Favorites stays inside a phone window" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    current = .library;
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    check_library_text = false;
+    try dvui.testing.settle(readableFrame);
+    check_library_text = true;
+    defer check_library_text = false;
+    _ = try dvui.testing.step(readableFrame);
+}

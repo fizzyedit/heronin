@@ -80,7 +80,7 @@ pub fn draw(queue: *imports.Queue, state: *lib.State, store: @import("../store.z
     bar.deinit();
     track.deinit();
     inline for (.{ counts.tagged, counts.review, counts.skipped }, .{ "tagged", "need a look", "not a bird" }, .{ theme.olive[0], theme.mustard[2], theme.chip }, .{ theme.card, theme.ink, theme.brown[0] }, 0..) |n, word, fill, ink, i| {
-        dvui.labelNoFmt(@src(), lib.fmt("{d} {s}", .{ n, word }), .{}, .{ .id_extra = i, .background = true, .color_fill = .{ .color = fill }, .color_text = .{ .color = ink } });
+        dvui.labelNoFmt(@src(), lib.fmt("{d} {s}", .{ n, word }), .{}, .{ .id_extra = i, .font = dvui.Font.theme(.body).withSize(theme.size.meta), .background = true, .color_fill = .{ .color = fill }, .color_text = .{ .color = ink } });
     }
     if (counts.review > 0 and dvui.button(@src(), lib.fmt("Review {d} that need a look", .{counts.review}), .{}, .{ .min_size_content = .{ .h = 44 } })) {
         state.filter = .review;
