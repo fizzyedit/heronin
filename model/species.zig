@@ -20,3 +20,17 @@ pub fn find(code: []const u8) ?model.Species {
     for (table) |species| if (std.mem.eql(u8, species.code, code)) return species;
     return null;
 }
+
+pub fn index(code: []const u8) ?usize {
+    for (table, 0..) |s, i| if (std.mem.eql(u8, s.code, code)) return i;
+    return null;
+}
+pub fn matches(name: []const u8, query: []const u8) bool {
+    const q = std.mem.trim(u8, query, " ");
+    if (q.len == 0) return true;
+    for (name, 0..) |_, i| {
+        if (i != 0 and name[i - 1] != ' ' and name[i - 1] != '-') continue;
+        if (name.len - i >= q.len and std.ascii.eqlIgnoreCase(name[i..][0..q.len], q)) return true;
+    }
+    return false;
+}

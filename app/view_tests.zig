@@ -42,6 +42,14 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
         queue.step(fake.store());
         fake.store().pump();
     }
+    state.open = null;
+    current = .species;
+    state.segment = .seen;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-tabs");
+    state.segment = .not_yet;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-tabs");
     current = .add;
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-tabs");
@@ -97,4 +105,38 @@ test "library text wraps and Favorites stays inside a phone window" {
     check_library_text = true;
     defer check_library_text = false;
     _ = try dvui.testing.step(readableFrame);
+}
+
+var species_now: i64 = 0;
+fn speciesFrame() !dvui.App.Result {
+    @import("views/species.zig").draw(&state, species_now);
+    return .ok;
+}
+test "life list banner uses the supplied time" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    const model = @import("model");
+    var photos: [60]model.Photo = undefined;
+    var tags: [60][]const model.Tag = undefined;
+    for (state.items, 0..) |item, i| {
+        photos[i] = item.photo;
+        tags[i] = item.tags;
+    }
+    const entries = try model.life_list.build(std.testing.allocator, photos[0..state.items.len], tags[0..state.items.len]);
+    defer std.testing.allocator.free(entries);
+    var latest: ?i64 = null;
+    for (entries) |e| if (e.first_at) |at| {
+        latest = @max(latest orelse at, at);
+    };
+    try std.testing.expect(latest != null);
+    species_now = latest.? + 86400;
+    try dvui.testing.settle(speciesFrame);
+    try dvui.testing.expectVisible("heronin-new-week");
 }

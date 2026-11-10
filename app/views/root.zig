@@ -2,6 +2,7 @@ const dvui = @import("dvui");
 const theme = @import("../theme.zig");
 const tabs = @import("tabs.zig");
 const library = @import("library.zig");
+const species = @import("species.zig");
 const photo = @import("photo.zig");
 const add = @import("add.zig");
 const imports = @import("../import_queue.zig");
@@ -17,6 +18,7 @@ pub fn draw(current: *tabs.Tab, state: *library.State, queue: *imports.Queue, st
     defer content.deinit();
     switch (current.*) {
         .library => if (state.open != null) photo.draw(state, store) else library.draw(state),
+        .species => species.draw(state, library.now()),
         .add => add.draw(queue, state, store, current),
         else => dvui.labelNoFmt(@src(), current.title(), .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } }),
     }

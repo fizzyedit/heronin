@@ -13,6 +13,7 @@ pub const State = struct {
     requested: bool = false,
     stale: bool = false,
     photos: []model.Photo = &.{},
+    segment: enum { seen, not_yet } = .seen,
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
     tag_queue: ?*@import("../tag_queue.zig").TagQueue = null,
@@ -74,7 +75,7 @@ pub fn label(src: std.builtin.SourceLocation, text: []const u8, opts: dvui.Optio
 }
 pub fn species(text: []const u8, size: f32) void {
     // TODO(font): Zilla Slab for species names, a later job adds the asset
-    label(@src(), text, .{ .tag = "heronin-species", .font = .find(.{ .family = theme.species_face, .size = size, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
+    label(@src(), text, .{ .tag = fmt("heronin-species-{x}", .{dvui.parentGet().data().id}), .font = .find(.{ .family = theme.species_face, .size = size, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
 }
 pub fn badge(state: model.Photo.State) void {
     const style = switch (state) {
@@ -87,8 +88,11 @@ pub fn badge(state: model.Photo.State) void {
     };
     dvui.labelNoFmt(@src(), logic.statusWord(state), .{}, .{ .background = true, .color_fill = .{ .color = style.fill }, .color_text = .{ .color = style.ink } });
 }
+pub fn now() i64 {
+    return @intCast(@divFloor(std.Io.Clock.real.now(dvui.io).nanoseconds, 1_000_000_000));
+}
 pub fn day(photo: model.Photo) []const u8 {
-    return if (photo.taken_at) |at| logic.dayLabel(dvui.currentWindow().arena().alloc(u8, 40) catch unreachable, at, @intCast(@divFloor(std.Io.Clock.real.now(dvui.io).nanoseconds, 1_000_000_000)), 0) else "Unknown date";
+    return if (photo.taken_at) |at| logic.dayLabel(dvui.currentWindow().arena().alloc(u8, 40) catch unreachable, at, now(), 0) else "Unknown date";
 }
 pub fn draw(state: *State) void {
     var heading = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
