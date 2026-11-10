@@ -16,7 +16,13 @@ pub const State = struct {
     segment: enum { seen, not_yet } = .seen,
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
+    species: ?[]const u8 = null,
+    picking: bool = false,
     tag_queue: ?*@import("../tag_queue.zig").TagQueue = null,
+    pub fn close(self: *State) void {
+        self.open = null;
+        self.picking = false;
+    }
     pub fn reloadBetweenJobs(self: *State, store: api.Store, busy: bool, in_library: bool) bool {
         if (busy or !in_library or self.open != null or !self.stale) return false;
         self.reload(store);
@@ -104,6 +110,13 @@ pub fn draw(state: *State) void {
     if (tagging > 0) dvui.label(@src(), "Agent is tagging {d}", .{tagging}, .{ .background = true, .corners = .all(20), .color_fill = .{ .color = theme.chip } });
     heading.deinit();
     var filters = dvui.flexbox(@src(), .{ .justify_content = .start }, .{ .expand = .horizontal });
+    if (state.filter == .species) {
+        const chosen = model.species.find(state.species.?).?;
+        if (dvui.button(@src(), fmt("{s} ×", .{chosen.common}), .{}, .{ .id_extra = 4, .tag = "heronin-species-chip", .min_size_content = .{ .h = 44 }, .background = true, .color_fill = .{ .color = theme.red[0] }, .color_text = .{ .color = theme.card } })) {
+            state.filter = .all;
+            state.species = null;
+        }
+    }
     inline for (.{ "All", "Tagged", "Needs review", "Favorites" }, 0..) |title, i| {
         const chosen = @backingInt(state.filter) == i;
         if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = title, .margin = .all(6), .font = .find(.{ .family = theme.body_face, .size = 14, .weight = .bold }), .min_size_content = .{ .h = 44 }, .border = .all(2), .corners = .all(22), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) state.filter = @fromBackingInt(@intCast(i));
@@ -117,7 +130,7 @@ pub fn draw(state: *State) void {
     var heights: [60]f32 = undefined;
     var columns: [60]f32 = @splat(0);
     var positions: [60]usize = undefined;
-    for (state.items, 0..) |item, i| heights[i] = if (logic.matches(item, state.filter)) @max(44, col_w * @as(f32, @floatFromInt(item.photo.h)) / @as(f32, @floatFromInt(item.photo.w))) else 0;
+    for (state.items, 0..) |item, i| heights[i] = if (logic.matches(item, state.filter, state.species)) @max(44, col_w * @as(f32, @floatFromInt(item.photo.h)) / @as(f32, @floatFromInt(item.photo.w))) else 0;
     logic.placeTiles(heights[0..state.items.len], columns[0..count], positions[0..state.items.len]);
     var grid = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
     defer grid.deinit();
@@ -125,7 +138,7 @@ pub fn draw(state: *State) void {
         var column = dvui.box(@src(), .{ .dir = .vertical }, .{ .id_extra = col, .min_size_content = .{ .w = col_w }, .max_size_content = .width(col_w), .margin = .{ .w = if (col + 1 == count) 0 else 12 } });
         defer column.deinit();
         for (state.items, 0..) |item, i| {
-            if (!logic.matches(item, state.filter) or positions[i] != col) continue;
+            if (!logic.matches(item, state.filter, state.species) or positions[i] != col) continue;
             var tile: dvui.ButtonWidget = undefined;
             tile.init(@src(), .{}, .{ .id_extra = i, .expand = .horizontal, .padding = .all(0), .border = .all(2), .margin = .{ .h = 12 }, .color_border = .{ .color = theme.border }, .color_fill = .{ .color = theme.card } });
             tile.processEvents();
