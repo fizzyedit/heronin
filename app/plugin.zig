@@ -57,7 +57,7 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         state.stale = true;
         dvui.refresh(null, @src(), null);
     }
-    const reloaded = state.reloadBetweenJobs(fake.?.store(), tagging.busy != null, current == .library);
+    const reloaded = state.reloadBetweenJobs(fake.?.store(), tagging.busy != null, current == .library or current == .species);
     tagging.tags_allocator = state.arena.allocator();
     tagging.items = state.items;
     tagging.photos = state.photos;

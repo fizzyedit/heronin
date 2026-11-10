@@ -55,4 +55,5 @@ test "light theme maps every DVUI color field to an opaque role" {
 
 test {
     _ = @import("places_tests.zig");
+    _ = @import("life_list_tests.zig");
 }
