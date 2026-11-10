@@ -1,3 +1,4 @@
+pub const places_client = @import("../places_client.zig");
 const std = @import("std");
 const dvui = @import("dvui");
 const core = @import("core");
@@ -151,7 +152,7 @@ pub fn draw(state: *State) void {
             badge(item.photo.state);
             image.deinit();
             label(@src(), logic.tileTitle(item), .{ .tag = fmt("tile-title-{d}", .{i}), .font = .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
-            const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places);
+            const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places, if (model.places.placeOf(item.photo, state.photos)) |point| places_client.near(&places_client.names, point) else null);
             label(@src(), logic.tileMeta(dvui.currentWindow().arena(), item, place, day(item.photo)), .{ .tag = fmt("tile-place-{d}", .{i}), .font = dvui.Font.theme(.body).withSize(theme.size.meta), .color_text = .{ .color = theme.tab_off_ink } });
             contents.deinit();
             if (tile.clicked()) state.open = item.photo.id;

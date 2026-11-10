@@ -2,23 +2,36 @@ const std = @import("std");
 const wire = @import("tagger.zig");
 const decisions = @import("decide.zig");
 const Fake = @import("fake_tagger.zig").Fake;
-pub const Config = struct { port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake" };
+const Gazetteer = @import("place_names.zig").Gazetteer;
+pub const Config = struct { gazetteer: []const u8 = "geonames.txt", port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake" };
 const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
 }
-const Route = enum { tag };
+const Route = enum { tag, place };
 fn route(target: []const u8) ?Route {
     const path = if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target;
-    const paths = std.StaticStringMap(Route).initComptime(.{.{ "/api/tag", .tag }});
-    return paths.get(path);
+    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place } });
+    return paths.get(path[0 .. std.mem.indexOfScalar(u8, path, '?') orelse path.len]);
 }
-pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64) !void {
+pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer) !void {
     if (request.head.content_length orelse 0 > cap) return respond(request, .payload_too_large, "{\"error\":\"body too large\"}");
     const matched = route(request.head.target) orelse return respond(request, .not_found, "{\"error\":\"not found\"}");
-    if (request.head.method != .POST) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = "POST" }, .{ .name = "content-type", .value = "application/json" } } });
-    switch (matched) {
-        .tag => {},
+    if (request.head.method != (if (matched == .place) std.http.Method.GET else .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched == .place) "GET" else "POST" }, .{ .name = "content-type", .value = "application/json" } } });
+    if (matched == .place) {
+        var lat: f64 = std.math.nan(f64);
+        var lon = lat;
+        var query = std.mem.splitScalar(u8, request.head.target[(std.mem.indexOfScalar(u8, request.head.target, '?') orelse request.head.target.len - 1) + 1 ..], '&');
+        while (query.next()) |part| {
+            const eq = std.mem.indexOfScalar(u8, part, '=') orelse continue;
+            const value = std.fmt.parseFloat(f64, part[eq + 1 ..]) catch std.math.nan(f64);
+            if (std.mem.eql(u8, part[0..eq], "lat")) lat = value;
+            if (std.mem.eql(u8, part[0..eq], "lon")) lon = value;
+        }
+        if (!std.math.isFinite(lat) or !std.math.isFinite(lon) or @abs(lat) > 90 or @abs(lon) > 180) return respond(request, .bad_request, "{}");
+        const json = try std.json.Stringify.valueAlloc(allocator, .{ .name = gazetteer.nearest(@round(lat * 1000) / 1000, @round(lon * 1000) / 1000) }, .{});
+        defer allocator.free(json);
+        return respond(request, .ok, json);
     }
     const reader = try request.readerExpectContinue(&.{});
     const body = reader.allocRemaining(allocator, .limited(cap)) catch |err| return respond(request, if (err == error.StreamTooLong) .payload_too_large else .bad_request, "{\"error\":\"invalid body\"}");
@@ -39,6 +52,7 @@ pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, t
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     var config: Config = .{};
+    var gazetteer: Gazetteer = .{};
     if (init.environ_map.get("HERONIN_DATA")) |data| {
         const path = try std.fs.path.join(allocator, &.{ data, "server.zon" });
         const source = std.Io.Dir.cwd().readFileAlloc(init.io, path, allocator, .limited(65536)) catch |err| switch (err) {
@@ -53,6 +67,7 @@ pub fn main(init: std.process.Init) !void {
             };
         }
     }
+    if (init.environ_map.get("HERONIN_DATA")) |data| gazetteer = try Gazetteer.load(allocator, init.io, if (std.fs.path.isAbsolute(config.gazetteer)) config.gazetteer else try std.fs.path.join(allocator, &.{ data, config.gazetteer }));
     if (!std.mem.eql(u8, config.tagger, "fake") or !std.math.isFinite(config.threshold) or config.threshold < 0 or config.threshold > 1) return error.InvalidConfig;
     if (init.environ_map.get("HERONIN_PORT")) |port| config.port = try std.fmt.parseInt(u16, port, 10);
     const address = try std.Io.net.IpAddress.parse("127.0.0.1", config.port);
@@ -73,7 +88,7 @@ pub fn main(init: std.process.Init) !void {
         var writer = stream.writer(init.io, &write_buffer);
         var server = std.http.Server.init(&reader.interface, &writer.interface);
         var request = server.receiveHead() catch continue;
-        handle(&request, arena.allocator(), fake.tagger(), config.threshold, std.Io.Clock.real.now(init.io).toSeconds()) catch {
+        handle(&request, arena.allocator(), fake.tagger(), config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer) catch {
             respond(&request, .internal_server_error, "{\"error\":\"internal\"}") catch {};
         };
     }

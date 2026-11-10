@@ -1,3 +1,4 @@
+var places_base: ?[]const u8 = if (@import("builtin").cpu.arch == .wasm32) "" else null;
 const sdk = @import("fizzy_sdk");
 const dvui = @import("dvui");
 const root = @import("views/root.zig");
@@ -21,6 +22,7 @@ pub fn register(host: *sdk.Host) !void {
         agent.url = "/heronin/api/tag";
     } else {
         const env = @import("core").platform.processEnviron().getAlloc(tagging.owned.allocator(), "HERONIN_TAG_URL") catch null;
+        places_base = env;
         agent.url = try @import("tag_queue.zig").serverUrl(tagging.owned.allocator(), env, "tag");
     }
     plugin.state = @ptrCast(host);
@@ -28,6 +30,7 @@ pub fn register(host: *sdk.Host) !void {
     try host.registerSurface(.{ .id = "heronin.library", .owner = &plugin, .title = "Library", .keywords = &.{"heronin"}, .scrolls_itself = true, .draw = draw });
 }
 fn deinit(_: *anyopaque) void {
+    library.places_client.names.deinit();
     if (fake != null) agent.deinit();
     tagging.deinit();
     if (fake) |*f| f.deinit();
@@ -67,6 +70,8 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     tagging.items = state.items;
     tagging.photos = state.photos;
     if (!reloaded) tagging.step(fake.?.store(), agent.post);
+    library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
+    if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);
     if (!state.requested and state.items.len > 0) {
         for (state.items, 0..) |item, i| fake.?.store().thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
