@@ -73,7 +73,7 @@ pub const Auth = struct {
             const dir_path = try std.fs.path.join(a, &.{ self.data, "tokens" });
             var dir = try std.Io.Dir.cwd().createDirPathOpen(self.io, dir_path, .{ .permissions = permissions(0o700), .open_options = .{ .iterate = true } });
             defer dir.close(self.io);
-            try dir.setPermissions(self.io, permissions(0o700));
+            if (@import("builtin").os.tag != .windows) try dir.setPermissions(self.io, permissions(0o700));
             const lower = try a.dupe(u8, email);
             for (lower) |*ch| ch.* = std.ascii.toLower(ch.*);
             const name = std.fmt.bytesToHex(digest(lower), .lower);

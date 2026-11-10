@@ -108,7 +108,7 @@ test "callback stores private refresh token and session survives request arena; 
     try expect(f.sign_in.session(null, 100) == null);
     var hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("bird@example.invalid", &hash, .{});
-    const name = try std.fmt.allocPrint(f.arena.allocator(), "tokens/{s}", .{std.fmt.bytesToHex(hash, .lower)});
+    const name = try std.fs.path.join(f.arena.allocator(), &.{ "tokens", &std.fmt.bytesToHex(hash, .lower) });
     try equal("refresh", try f.tmp.dir.readFileAlloc(io, name, f.arena.allocator(), .limited(100)));
     if (@import("builtin").os.tag != .windows) {
         try std.testing.expectEqual(@as(u32, 0o600), (try f.tmp.dir.statFile(io, name, .{})).permissions.toMode() & 0o777);
