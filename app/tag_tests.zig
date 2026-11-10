@@ -160,7 +160,7 @@ test "native default and override form transport URLs" {
     const a = try std.Uri.parse(default);
     const b = try std.Uri.parse(override);
     try testing.expectEqualStrings("127.0.0.1", a.host.?.percent_encoded);
-    try testing.expectEqual(@as(?u16, 8787), a.port);
+    try testing.expectEqual(@as(?u16, 8790), a.port);
     try testing.expectEqualStrings("localhost", b.host.?.percent_encoded);
     try testing.expectEqual(@as(?u16, 9000), b.port);
     try testing.expectEqualStrings("/heronin/api/tag", b.path.percent_encoded);
@@ -205,4 +205,45 @@ test "asked id survives caller reuse and job memory is freed after saving" {
     try testing.expect(q.asked == null);
     try testing.expectEqual(@as(usize, 0), q.arena.queryCapacity());
     try testing.expectEqualDeep(@as([]const model.Tag, &guesses), q.items[0].tags);
+}
+test "import during auto tagging reaches Library between jobs" {
+    var ui = try @import("dvui").testing.init(.{});
+    defer ui.deinit();
+    var f = try FakeStore.init(testing.allocator);
+    defer f.deinit();
+    reset(&f);
+    f.items[0].photo.state = .new;
+    f.items[1].photo.state = .new;
+    var state: @import("views/library.zig").State = .{};
+    defer state.arena.deinit();
+    const store = f.store();
+    store.list(null, 60, &state, @import("views/library.zig").State.listed);
+    store.pump();
+    const settings: tags.Settings = .{ .auto = true };
+    var q: tags.TagQueue = .{ .settings = &settings, .items = state.items, .tags_allocator = state.arena.allocator() };
+    defer q.deinit();
+    q.step(store, hold);
+    store.pump();
+    store.importFile("new-import.jpg", "new import bytes", &state, struct {
+        fn imported(ctx: ?*anyopaque, result: api.Error!api.Imported) void {
+            _ = result catch unreachable;
+            const s: *@import("views/library.zig").State = @ptrCast(@alignCast(ctx.?));
+            s.stale = true;
+        }
+    }.imported);
+    store.pump();
+    try testing.expect(state.stale);
+    try testing.expect(!state.reloadBetweenJobs(store, q.busy != null, true));
+    q.answer(.{ .state = .review, .tags = &guesses });
+    store.pump();
+    try testing.expect(q.busy == null);
+    try testing.expect(q.next(state.items) != null);
+    try testing.expect(state.reloadBetweenJobs(store, q.busy != null, true));
+    q.items = state.items;
+    store.pump();
+    try testing.expectEqualStrings("new-import.jpg", state.items[0].photo.name);
+    try testing.expectEqual(model.Photo.State.new, state.items[0].photo.state);
+    q.items = state.items;
+    q.tags_allocator = state.arena.allocator();
+    try testing.expect(q.next(state.items) != null);
 }

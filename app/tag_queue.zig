@@ -3,8 +3,9 @@ const model = @import("model");
 const api = @import("store.zig");
 pub const wire = @import("wire");
 pub const Settings = struct { auto: bool = false, ask_below: bool = true, use_place: bool = true, agent: model.QueueItem.Agent = .ours };
+// Native uses HERONIN_TAG_URL, defaulting to the K4a server on port 8790.
 pub fn endpoint(a: std.mem.Allocator, override: ?[]const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{s}/heronin/api/tag", .{std.mem.trimEnd(u8, override orelse "http://127.0.0.1:8787", "/")});
+    return std.fmt.allocPrint(a, "{s}/heronin/api/tag", .{std.mem.trimEnd(u8, override orelse "http://127.0.0.1:8790", "/")});
 }
 pub const TagQueue = struct {
     asked: ?[]const u8 = null,

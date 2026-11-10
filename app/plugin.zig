@@ -48,11 +48,6 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (queue.busy) dvui.refresh(null, @src(), null);
     agent.transport.pump();
     fake.?.store().pump();
-    tagging.tags_allocator = state.arena.allocator();
-    tagging.items = state.items;
-    tagging.photos = state.photos;
-    tagging.step(fake.?.store(), agent.post);
-    if (tagging.busy != null) dvui.refresh(null, @src(), null);
     var finished: usize = 0;
     for (queue.rows.items) |row| {
         if (row.state == .imported) finished += 1;
@@ -62,7 +57,12 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         state.stale = true;
         dvui.refresh(null, @src(), null);
     }
-    if (current == .library and state.open == null and state.stale and tagging.busy == null) state.reload(fake.?.store());
+    const reloaded = state.reloadBetweenJobs(fake.?.store(), tagging.busy != null, current == .library);
+    tagging.tags_allocator = state.arena.allocator();
+    tagging.items = state.items;
+    tagging.photos = state.photos;
+    if (!reloaded) tagging.step(fake.?.store(), agent.post);
+    if (tagging.busy != null) dvui.refresh(null, @src(), null);
     if (!state.requested and state.items.len > 0) {
         for (state.items, 0..) |item, i| fake.?.store().thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
         state.requested = true;
