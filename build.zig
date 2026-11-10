@@ -84,5 +84,15 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(app_tests).step);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&checker_test_run.step);
+    const server_model = b.createModule(.{ .root_source_file = b.path("model/model.zig"), .target = b.graph.host, .optimize = optimize });
+    const server_module = b.createModule(.{ .root_source_file = b.path("server/main.zig"), .target = b.graph.host, .optimize = optimize });
+    server_module.addImport("model", server_model);
+    server_module.addAnonymousImport("fake_tags", .{ .root_source_file = b.path("tests/fixtures/fake_tags.json") });
+    const server = b.addExecutable(.{ .name = "server", .root_module = server_module });
+    b.step("server", "Install the tagging server").dependOn(&b.addInstallArtifact(server, .{}).step);
+    const server_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("server/server_tests.zig"), .target = b.graph.host, .optimize = optimize }) });
+    server_tests.root_module.addImport("model", server_model);
+    server_tests.root_module.addAnonymousImport("fake_tags", .{ .root_source_file = b.path("tests/fixtures/fake_tags.json") });
+    test_step.dependOn(&b.addRunArtifact(server_tests).step);
     b.step("check-public", "Check tracked files for private content").dependOn(&check_run.step);
 }
