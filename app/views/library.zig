@@ -15,6 +15,7 @@ pub const State = struct {
     photos: []model.Photo = &.{},
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
+    tag_queue: ?*@import("../tag_queue.zig").TagQueue = null,
     pub fn reload(self: *State, store: api.Store) void {
         std.debug.assert(self.open == null);
         _ = self.arena.reset(.retain_capacity);
