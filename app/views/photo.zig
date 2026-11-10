@@ -62,7 +62,7 @@ pub fn draw(state: *lib.State, store: api.Store) void {
     } else lib.badge(item.photo.state);
     if (item.photo.state == .new or item.photo.state == .failed) {
         if (dvui.button(@src(), "Tag this", .{}, .{ .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = theme.orange[0] } })) {
-            if (state.tag_queue) |q| q.asked = item.photo.id;
+            if (state.tag_queue) |q| q.ask(item.photo.id);
         }
     }
     lib.label(@src(), lib.fmt("Seen: {s}", .{lib.day(item.photo)}), .{});

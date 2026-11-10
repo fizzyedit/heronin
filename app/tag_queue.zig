@@ -14,13 +14,19 @@ pub const TagQueue = struct {
     items: []api.Item = &.{},
     photos: []const model.Photo = &.{},
     arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+    owned: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+    tags_allocator: ?std.mem.Allocator = null,
     store: api.Store = undefined,
     post: Post = undefined,
     active: usize = 0,
     pub const Post = *const fn (*TagQueue, wire.Request) void;
     pub fn deinit(self: *TagQueue) void {
         self.arena.deinit();
+        self.owned.deinit();
         self.* = .{ .settings = self.settings };
+    }
+    pub fn ask(self: *TagQueue, id: []const u8) void {
+        self.asked = self.owned.allocator().dupe(u8, id) catch return;
     }
     pub fn next(self: *TagQueue, items: []const api.Item) ?[]const u8 {
         if (self.busy != null) return null;
@@ -61,12 +67,12 @@ pub const TagQueue = struct {
     pub fn answer(self: *TagQueue, result: anyerror!wire.Response) void {
         const item = &self.items[self.active];
         const response = result catch blk: {
-            const count = self.attempts.getOrPut(self.arena.allocator(), self.arena.allocator().dupe(u8, item.photo.id) catch return) catch return;
+            const count = self.attempts.getOrPut(self.owned.allocator(), self.owned.allocator().dupe(u8, item.photo.id) catch return) catch return;
             if (!count.found_existing) count.value_ptr.* = 0;
             count.value_ptr.* +|= 1;
             break :blk wire.Response{ .tags = &.{}, .state = if (count.value_ptr.* >= 3) .failed else .new };
         };
-        item.tags = response.tags;
+        item.tags = copyTags(self.tags_allocator orelse self.owned.allocator(), response.tags) catch return self.answer(error.OutOfMemory);
         item.photo.state = response.state;
         self.store.setTags(item.photo.id, response.tags, response.state, self, saved);
     }
@@ -75,5 +81,15 @@ pub const TagQueue = struct {
         if (self.items[self.active].photo.state != .failed) result catch |err| return self.answer(err);
         if (self.items[self.active].photo.state != .new and self.asked != null and std.mem.eql(u8, self.asked.?, self.busy.?)) self.asked = null;
         self.busy = null;
+        _ = self.arena.reset(.free_all);
     }
 };
+fn copyTags(a: std.mem.Allocator, tags: []const model.Tag) ![]model.Tag {
+    const out = try a.dupe(model.Tag, tags);
+    for (out) |*tag| inline for (.{ "species", "model", "detail", "note" }) |field| {
+        if (@FieldType(model.Tag, field) == []const u8) @field(tag, field) = try a.dupe(u8, @field(tag, field)) else if (@field(tag, field)) |s| {
+            @field(tag, field) = try a.dupe(u8, s);
+        }
+    };
+    return out;
+}

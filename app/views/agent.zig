@@ -17,14 +17,14 @@ pub fn draw(settings: *tags.Settings) void {
         } else dvui.labelNoFmt(@src(), name ++ " · " ++ hint, .{}, opts.override(.{ .background = true, .color_text = .{ .color = theme.tab_off_ink } }));
     }
     lib.label(@src(), "Connect", .{});
-    inline for (.{ "Address", "Key (kept on your Heronin server)", "Test with one photo" }) |text| lib.label(@src(), text, .{ .min_size_content = .{ .h = 44 }, .color_text = .{ .color = theme.tab_off_ink }, .background = true, .color_fill = .{ .color = theme.chip } });
-    toggle("Send previews to the tagging agent", &settings.auto);
-    toggle(lib.fmt("Ask me below {d} percent", .{auto_accept_shown}), &settings.ask_below);
-    toggle("Use location to narrow guesses", &settings.use_place);
+    inline for (.{ "Address", "Key (kept on your Heronin server)", "Test with one photo" }, 0..) |text, i| lib.label(@src(), text, .{ .id_extra = i, .min_size_content = .{ .h = 44 }, .color_text = .{ .color = theme.tab_off_ink }, .background = true, .color_fill = .{ .color = theme.chip } });
+    toggle(0, "Send previews to the tagging agent", &settings.auto);
+    toggle(1, lib.fmt("Ask me below {d} percent", .{auto_accept_shown}), &settings.ask_below);
+    toggle(2, "Use location to narrow guesses", &settings.use_place);
     lib.label(@src(), "Only the place is sent, never the photo's location data", .{});
 }
-fn toggle(text: []const u8, value: *bool) void {
-    if (dvui.button(@src(), text, .{}, .{ .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = if (value.*) theme.olive[0] else theme.chip }, .color_text = .{ .color = if (value.*) theme.card else theme.ink } })) value.* = !value.*;
+fn toggle(id: usize, text: []const u8, value: *bool) void {
+    if (dvui.button(@src(), text, .{}, .{ .id_extra = id, .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = if (value.*) theme.olive[0] else theme.chip }, .color_text = .{ .color = if (value.*) theme.card else theme.ink } })) value.* = !value.*;
 }
 const web = @import("builtin").cpu.arch == .wasm32;
 var native: if (web) void else core.transport.Native = undefined;
@@ -52,17 +52,30 @@ fn received(ctx: ?*anyopaque, result: core.vfs.Error!core.vfs.http.Response) voi
     job = null;
     const q: *tags.TagQueue = @ptrCast(@alignCast(ctx.?));
     const response = result catch return q.answer(error.Io);
-    defer response.deinit(q.arena.allocator());
-    if (response.status != 200) return q.answer(error.Io);
-    const parsed = std.json.parseFromSlice(tags.wire.Response, q.arena.allocator(), response.body, .{ .allocate = .alloc_always }) catch return q.answer(error.Io);
-    q.answer(parsed.value);
+    const parsed = if (response.status == 200) std.json.parseFromSlice(tags.wire.Response, q.arena.allocator(), response.body, .{ .allocate = .alloc_always }) else error.Io;
+    response.deinit(q.arena.allocator());
+    const answer = parsed catch return q.answer(error.Io);
+    q.answer(answer.value);
 }
 pub fn page(current: *@import("tabs.zig").Tab, settings: *tags.Settings) void {
     dvui.themeSet(theme.light(dvui.themeGet()));
-    var box = dvui.box(@src(), .{}, .{ .expand = .both, .background = true, .color_fill = .{ .color = theme.paper }, .padding = .all(16) });
+    var box = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .both, .background = true, .color_fill = .{ .color = theme.paper }, .padding = .all(16) });
     defer box.deinit();
     @import("tabs.zig").draw(current);
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
     defer scroll.deinit();
     draw(settings);
+}
+test "Agent tab keeps tabs visible without duplicate widget ids" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    try dvui.testing.settle(struct {
+        fn frame() !dvui.App.Result {
+            var current: @import("tabs.zig").Tab = .agent;
+            var settings: tags.Settings = .{};
+            page(&current, &settings);
+            return .ok;
+        }
+    }.frame);
+    try dvui.testing.expectVisible("heronin-tabs");
 }

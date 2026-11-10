@@ -7,6 +7,7 @@ const FakeStore = @import("fake_store.zig").FakeStore;
 var calls: usize = 0;
 var last: tags.wire.Request = undefined;
 var fail = false;
+var image_copy: [64]u8 = undefined;
 const guesses = [_]model.Tag{
     .{ .species = "norcar", .confidence = 0.7, .source = .ours, .accepted = .auto, .at = 1, .model = "fake", .box = .{ .x = 0.2, .y = 0.3, .w = 0.4, .h = 0.5 }, .detail = "adult", .note = "Matched crest" },
     .{ .species = "blujay", .confidence = 0.2, .source = .ours, .accepted = .auto, .at = 1, .model = "fake" },
@@ -14,11 +15,27 @@ const guesses = [_]model.Tag{
 fn post(q: *tags.TagQueue, request: tags.wire.Request) void {
     calls += 1;
     last = request;
-    if (fail) q.answer(error.Io) else q.answer(.{ .state = .review, .tags = &guesses });
+    if (request.image.len <= image_copy.len) {
+        @memcpy(image_copy[0..request.image.len], request.image);
+        last.image = image_copy[0..request.image.len];
+    }
+    if (fail) return q.answer(error.Io);
+    const reply = q.arena.allocator().dupe(model.Tag, &guesses) catch unreachable;
+    for (reply) |*tag| {
+        tag.species = q.arena.allocator().dupe(u8, tag.species) catch unreachable;
+        tag.model = q.arena.allocator().dupe(u8, tag.model) catch unreachable;
+        if (tag.detail) |s| tag.detail = q.arena.allocator().dupe(u8, s) catch unreachable;
+        if (tag.note) |s| tag.note = q.arena.allocator().dupe(u8, s) catch unreachable;
+    }
+    q.answer(.{ .state = .review, .tags = reply });
 }
 fn hold(_: *tags.TagQueue, request: tags.wire.Request) void {
     calls += 1;
     last = request;
+    if (request.image.len <= image_copy.len) {
+        @memcpy(image_copy[0..request.image.len], request.image);
+        last.image = image_copy[0..request.image.len];
+    }
 }
 fn reset(f: *FakeStore) void {
     calls = 0;
@@ -83,12 +100,17 @@ test "Tag this alone with auto off; review preserves both tags and metadata" {
     f.items[0].photo.state = .new;
     f.items[1].photo.state = .failed;
     const settings: tags.Settings = .{};
-    var q: tags.TagQueue = .{ .settings = &settings, .items = f.items, .asked = f.items[1].photo.id };
+    const items = try testing.allocator.dupe(api.Item, f.items);
+    defer testing.allocator.free(items);
+    var q: tags.TagQueue = .{ .settings = &settings, .items = items };
+    q.ask(f.items[1].photo.id);
     defer q.deinit();
     tick(&q, &f);
     try testing.expectEqual(@as(usize, 1), calls);
     try testing.expectEqual(model.Photo.State.review, f.items[1].photo.state);
     try testing.expectEqualDeep(@as([]const model.Tag, &guesses), f.items[1].tags);
+    try testing.expectEqualDeep(@as([]const model.Tag, &guesses), items[1].tags);
+    try testing.expectEqual(@as(usize, 0), q.arena.queryCapacity());
     try testing.expectEqualStrings("", last.image);
     try testing.expect(last.auto_accept);
     tick(&q, &f);
@@ -162,4 +184,25 @@ test "encoded thumbnail bytes are base64 in the request" {
     q.step(store, post);
     f.store().pump();
     try testing.expectEqualStrings("cHJldmlldw==", last.image);
+}
+test "asked id survives caller reuse and job memory is freed after saving" {
+    var f = try FakeStore.init(testing.allocator);
+    defer f.deinit();
+    reset(&f);
+    const id = try testing.allocator.dupe(u8, f.items[0].photo.id);
+    defer testing.allocator.free(id);
+    const settings: tags.Settings = .{};
+    var q: tags.TagQueue = .{ .settings = &settings, .items = f.items };
+    defer q.deinit();
+    q.ask(id);
+    @memset(id, 'x');
+    fail = true;
+    tick(&q, &f);
+    try testing.expectEqualStrings(f.items[0].photo.id, q.next(f.items).?);
+    try testing.expectEqual(@as(usize, 0), q.arena.queryCapacity());
+    fail = false;
+    tick(&q, &f);
+    try testing.expect(q.asked == null);
+    try testing.expectEqual(@as(usize, 0), q.arena.queryCapacity());
+    try testing.expectEqualDeep(@as([]const model.Tag, &guesses), q.items[0].tags);
 }

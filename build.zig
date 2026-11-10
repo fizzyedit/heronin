@@ -80,6 +80,8 @@ pub fn build(b: *std.Build) !void {
         testing_core.addImport(name, headless);
     }
     const view_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/view_tests.zig"), .target = target, .optimize = optimize }) });
+    app_tests.root_module.addImport("dvui", testing_dvui);
+    app_tests.root_module.addImport("core", testing_core);
     view_tests.root_module.addImport("model", model);
     view_tests.root_module.addImport("wire", wire);
     view_tests.root_module.addImport("dvui", testing_dvui);
