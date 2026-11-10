@@ -1,29 +1,57 @@
 const std = @import("std");
+const rule = @import("sw_rule.zig");
+const Url = rule.Url;
 
 test "two deploys leave one web.wasm entry and navigation works offline" {
-    var lib = try std.DynLib.open("libjavascriptcoregtk-4.0.so.18");
-    defer lib.close();
-    const create = lib.lookup(*const fn (?*anyopaque) callconv(.c) ?*anyopaque, "JSGlobalContextCreate").?;
-    const release = lib.lookup(*const fn (?*anyopaque) callconv(.c) void, "JSGlobalContextRelease").?;
-    const string = lib.lookup(*const fn ([*:0]const u8) callconv(.c) ?*anyopaque, "JSStringCreateWithUTF8CString").?;
-    const free_string = lib.lookup(*const fn (?*anyopaque) callconv(.c) void, "JSStringRelease").?;
-    const eval = lib.lookup(*const fn (?*anyopaque, ?*anyopaque, ?*anyopaque, ?*anyopaque, c_int, *?*anyopaque) callconv(.c) ?*anyopaque, "JSEvaluateScript").?;
-    const boolean = lib.lookup(*const fn (?*anyopaque, ?*anyopaque) callconv(.c) bool, "JSValueToBoolean").?;
-    const ctx = create(null);
-    defer release(ctx);
+    var cached: [8]Url = undefined;
+    var count: usize = 0;
+    const shell: Url = .{ .pathname = "/heronin/index.html" };
+    const legacy: Url = .{ .pathname = "/heronin/web.wasm" };
+    const first: Url = .{ .pathname = legacy.pathname, .search = "?build=one" };
+    const second: Url = .{ .pathname = legacy.pathname, .search = "?build=two" };
+    const other: Url = .{ .pathname = "/heronin/other.wasm", .search = first.search };
+    const foreign: Url = .{ .origin = "https://other.test", .pathname = legacy.pathname };
+    for ([_]Url{ shell, legacy, foreign, first, other, second }) |stored| {
+        cached[count] = stored;
+        count += 1;
+        var kept: usize = 0;
+        for (cached[0..count]) |old| {
+            if (!rule.shouldDelete(old, stored)) {
+                cached[kept] = old;
+                kept += 1;
+            }
+        }
+        count = kept;
+    }
+    var wasm_count: usize = 0;
+    for (cached[0..count]) |entry| {
+        if (std.mem.eql(u8, entry.origin, second.origin) and std.mem.eql(u8, entry.pathname, second.pathname)) {
+            wasm_count += 1;
+            try std.testing.expectEqualStrings(second.search, entry.search);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), wasm_count);
+    try std.testing.expectEqual(@as(usize, 4), count);
+    try std.testing.expectEqualDeep(second, rule.offlineDocument(cached[0..count], second, false).?);
+    for ([_][]const u8{ "/heronin/", "/heronin/deep-link" }) |path| {
+        const request: Url = .{ .pathname = path };
+        try std.testing.expectEqualDeep(shell, rule.offlineDocument(cached[0..count], request, true).?);
+        try std.testing.expectEqual(null, rule.offlineDocument(cached[0..count], request, false));
+    }
+}
+
+test "worker source keeps the modeled pruning and shell fallback rules" {
     const allocator = std.testing.allocator;
     const worker = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "web/sw.js", allocator, .unlimited);
     defer allocator.free(worker);
-    const source = try std.mem.concatWithSentinel(allocator, u8, &.{ @embedFile("sw_mock.js"), worker, @embedFile("sw_cases.js") }, 0);
-    defer allocator.free(source);
-    const script = string(source);
-    defer free_string(script);
-    var exception: ?*anyopaque = null;
-    _ = eval(ctx, script, null, null, 1, &exception);
-    try std.testing.expect(exception == null);
-    // JavaScriptCore drains promise jobs when the outer evaluation returns.
-    const result = string("globalThis.passed === true");
-    defer free_string(result);
-    try std.testing.expect(boolean(ctx, eval(ctx, result, null, null, 1, &exception)));
-    try std.testing.expect(exception == null);
+    for ([_][]const u8{
+        "await cache.put(request, response);",
+        "for (const key of await cache.keys())",
+        "old.origin === url.origin && old.pathname === url.pathname &&",
+        "old.search !== url.search) await cache.delete(key);",
+        "return (await cache.match(request)) ||",
+        "(request.mode === 'navigate' && await cache.match(ROOT + 'index.html')) ||",
+        "const ROOT = '/heronin/';",
+        "ROOT + 'index.html'",
+    }) |text| try std.testing.expect(std.mem.indexOf(u8, worker, text) != null);
 }

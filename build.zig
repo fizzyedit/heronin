@@ -48,7 +48,6 @@ pub fn build(b: *std.Build) !void {
     check_run.setCwd(b.path("."));
     check_run.has_side_effects = true;
     const sw_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tests/check_public/sw_test.zig"), .target = b.graph.host, .optimize = optimize }) });
-    sw_tests.root_module.link_libc = true;
     const sw_test_run = b.addRunArtifact(sw_tests);
     sw_test_run.setCwd(b.path("."));
     sw_test_run.has_side_effects = true;
