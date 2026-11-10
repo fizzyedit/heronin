@@ -6,7 +6,7 @@ const lib = @import("library.zig");
 fn day(at: i64, now: i64) []const u8 {
     return lib.logic.dayLabel(dvui.currentWindow().arena().alloc(u8, 40) catch unreachable, at, now, 0);
 }
-pub fn draw(state: *lib.State, now: i64) void {
+pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void {
     const arena = dvui.currentWindow().arena();
     const photos = arena.alloc(model.Photo, state.items.len) catch unreachable;
     const tags = arena.alloc([]const model.Tag, state.items.len) catch unreachable;
@@ -43,7 +43,10 @@ pub fn draw(state: *lib.State, now: i64) void {
         for (entries, 0..) |e, ei| {
             if (!model.species.matches(e.species.common, query) and !model.species.matches(e.species.scientific, query)) continue;
             const index = model.species.index(e.species.code).?;
-            var row = dvui.box(@src(), .{ .dir = .vertical }, .{ .id_extra = index, .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.washes[index % 6] } });
+            var row: dvui.ButtonWidget = undefined;
+            row.init(@src(), .{}, .{ .id_extra = index, .tag = lib.fmt("heronin-seen-{d}", .{index}), .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.washes[index % 6] } });
+            row.processEvents();
+            row.drawBackground();
             lib.species(e.species.common, theme.size.species);
             var place: ?[]const u8 = null;
             for (photos) |photo| if (@import("std").mem.eql(u8, photo.id, e.first)) {
@@ -56,6 +59,12 @@ pub fn draw(state: *lib.State, now: i64) void {
                 if (i == ei) is_new = true;
             }
             dvui.label(@src(), "{d}", .{e.count}, .{ .background = true, .color_fill = .{ .color = if (is_new) theme.mustard[0] else theme.chip } });
+            if (row.clicked()) {
+                state.species = model.species.table[index].code;
+                state.filter = .species;
+                state.close();
+                current.* = .library;
+            }
             row.deinit();
             shown += 1;
         }

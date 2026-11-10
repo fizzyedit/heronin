@@ -1,7 +1,7 @@
 const std = @import("std");
 const model = @import("model");
 const Item = @import("store.zig").Item;
-pub const Filter = enum { all, tagged, review, favorites };
+pub const Filter = enum { all, tagged, review, favorites, species };
 pub fn dayLabel(buf: []u8, at: i64, now: i64, tz_offset_s: i32) []const u8 {
     const local = at + tz_offset_s;
     const day = @divFloor(local, 86400);
@@ -26,12 +26,13 @@ pub fn tileTitle(item: Item) []const u8 {
 pub fn common(tag: model.Tag) []const u8 {
     return if (model.species.find(tag.species)) |s| s.common else tag.species;
 }
-pub fn matches(item: Item, filter: Filter) bool {
+pub fn matches(item: Item, filter: Filter, species: ?[]const u8) bool {
     return switch (filter) {
         .all => true,
         .tagged => item.photo.state == .tagged,
         .review => item.photo.state == .review,
         .favorites => item.photo.favorite,
+        .species => if (model.life_list.counted(item.photo, item.tags)) |s| if (species) |code| std.mem.eql(u8, s.code, code) else false else false,
     };
 }
 pub fn placeTiles(heights: []const f32, columns: []f32, out: []usize) void {

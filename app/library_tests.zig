@@ -23,7 +23,7 @@ test "fixture titles and filter counts" {
     var counts: [4]usize = @splat(0);
     for (fake.items) |item| {
         inline for (.{ .all, .tagged, .review, .favorites }, 0..) |filter, i| {
-            if (logic.matches(item, filter)) counts[i] += 1;
+            if (logic.matches(item, filter, null)) counts[i] += 1;
         }
         switch (item.photo.state) {
             .tagged => try expectEqualStrings(@import("model").species.find(item.tags[0].species).?.common, logic.tileTitle(item)),
@@ -50,4 +50,21 @@ test "place text uses saved radius and preserves absent location" {
     try expectEqualStrings("Garden", logic.placeText(.{ .lat = 0.0001, .lon = 0, .src = .photo }, &saved).?);
     try expectEqualStrings("Unnamed place", logic.placeText(.{ .lat = 1, .lon = 0, .src = .nearby }, &saved).?);
     try std.testing.expect(logic.placeText(null, &saved) == null);
+}
+
+test "species filter includes only counted photos of the chosen bird" {
+    var fake = try FakeStore.init(std.testing.allocator);
+    defer fake.deinit();
+    var item = fake.items[0];
+    var tag = item.tags[0];
+    item.tags = &.{tag};
+    try std.testing.expect(logic.matches(item, .species, tag.species));
+    try std.testing.expect(!logic.matches(item, .species, "greegr"));
+    try std.testing.expect(!logic.matches(item, .species, null));
+    item.photo.state = .review;
+    try std.testing.expect(!logic.matches(item, .species, tag.species));
+    item.photo.state = .tagged;
+    tag.accepted = .rejected;
+    item.tags = &.{tag};
+    try std.testing.expect(!logic.matches(item, .species, tag.species));
 }

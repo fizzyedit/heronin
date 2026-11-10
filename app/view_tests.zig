@@ -35,6 +35,9 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
     try std.testing.expect(state.open != null);
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-tabs");
+    state.picking = true;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-tabs");
     try queue.add(&.{ "a.jpg", "b.jpg" }, &.{ try queue.allocator.dupe(u8, "a"), try queue.allocator.dupe(u8, "b") });
     while (queue.busy or for (queue.rows.items) |row| {
         if (row.state == .queued) break true;
@@ -42,7 +45,7 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
         queue.step(fake.store());
         fake.store().pump();
     }
-    state.open = null;
+    state.close();
     current = .species;
     state.segment = .seen;
     try dvui.testing.settle(frame);
@@ -109,7 +112,7 @@ test "library text wraps and Favorites stays inside a phone window" {
 
 var species_now: i64 = 0;
 fn speciesFrame() !dvui.App.Result {
-    @import("views/species.zig").draw(&state, species_now);
+    @import("views/species.zig").draw(&state, species_now, &current);
     return .ok;
 }
 test "life list banner uses the supplied time" {
@@ -139,4 +142,94 @@ test "life list banner uses the supplied time" {
     species_now = latest.? + 86400;
     try dvui.testing.settle(speciesFrame);
     try dvui.testing.expectVisible("heronin-new-week");
+}
+
+fn countedHerons() !u32 {
+    const model = @import("model");
+    var photos: [60]model.Photo = undefined;
+    var tags: [60][]const model.Tag = undefined;
+    for (state.items, 0..) |item, i| {
+        photos[i] = item.photo;
+        tags[i] = item.tags;
+    }
+    const entries = try model.life_list.build(std.testing.allocator, photos[0..state.items.len], tags[0..state.items.len]);
+    defer std.testing.allocator.free(entries);
+    for (entries) |entry| if (std.mem.eql(u8, entry.species.code, "grbher3")) return entry.count;
+    return 0;
+}
+fn tap(tag: []const u8) !void {
+    try dvui.testing.moveTo(tag);
+    try dvui.testing.click(.left);
+    try dvui.testing.settle(frame);
+}
+test "picker saves a review photo and increases the Seen count" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    current = .library;
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().pump();
+    const before = try countedHerons();
+    var selected: usize = 0;
+    for (state.items, 0..) |item, i| if (item.photo.state == .review) {
+        selected = i;
+        state.open = item.photo.id;
+        break;
+    };
+    state.picking = true;
+    try dvui.testing.settle(frame);
+    try tap("heronin-picker-back");
+    try std.testing.expect(!state.picking and state.open != null);
+    state.picking = true;
+    try dvui.testing.settle(frame);
+    try tap("heronin-pick-0");
+    try std.testing.expect(!state.picking and state.open != null);
+    try std.testing.expectEqual(before + 1, try countedHerons());
+    fake.store().pump();
+    state.close();
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().pump();
+    const item = state.items[selected];
+    try std.testing.expectEqual(.tagged, item.photo.state);
+    try std.testing.expectEqualStrings("grbher3", item.tags[0].species);
+    try std.testing.expectEqual(.person, item.tags[0].source);
+    try std.testing.expectEqual(.person, item.tags[0].accepted);
+    try std.testing.expectEqual(before + 1, try countedHerons());
+}
+test "Seen row opens only its counted photos and its chip returns to All" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    current = .species;
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().pump();
+    try dvui.testing.settle(frame);
+    try tap("heronin-seen-0");
+    try std.testing.expectEqual(.library, current);
+    try dvui.testing.expectVisible("heronin-species-chip");
+    for (state.items, 0..) |item, i| {
+        const tile = dvui.tagGet(library.fmt("tile-title-{d}", .{i}));
+        try std.testing.expectEqual(library.logic.matches(item, .species, "grbher3"), tile != null);
+    }
+    const chosen = state.species.?;
+    state.stale = true;
+    try std.testing.expect(state.reloadBetweenJobs(fake.store(), false, true));
+    fake.store().pump();
+    try std.testing.expect(state.species.?.ptr == chosen.ptr);
+    try std.testing.expect(state.species.?.ptr == @import("model").species.table[0].code.ptr);
+    try dvui.testing.settle(frame);
+    try tap("heronin-species-chip");
+    try std.testing.expectEqual(.all, state.filter);
+    try std.testing.expect(state.species == null);
+    for (state.items, 0..) |_, i| try std.testing.expect(dvui.tagGet(library.fmt("tile-title-{d}", .{i})) != null);
 }

@@ -34,3 +34,14 @@ pub fn matches(name: []const u8, query: []const u8) bool {
     }
     return false;
 }
+
+pub fn search(query: []const u8, out: []model.Species) []model.Species {
+    var n: usize = 0;
+    for (table) |s| {
+        if (n == out.len) break;
+        if (!matches(s.common, query) and !matches(s.scientific, query)) continue;
+        out[n] = s;
+        n += 1;
+    }
+    return out[0..n];
+}

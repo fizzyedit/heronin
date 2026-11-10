@@ -7,8 +7,12 @@ const theme = @import("../theme.zig");
 const lib = @import("library.zig");
 fn done(_: ?*anyopaque, _: api.Error!void) void {}
 pub fn draw(state: *lib.State, store: api.Store) void {
+    if (state.picking) {
+        @import("species_picker.zig").draw(state, store);
+        return;
+    }
     if (dvui.button(@src(), "Back", .{}, .{ .min_size_content = .{ .h = 44 } })) {
-        state.open = null;
+        state.close();
         return;
     }
     var index: usize = 0;
@@ -46,7 +50,6 @@ pub fn draw(state: *lib.State, store: api.Store) void {
             item.tags = kept;
             item.photo.state = .tagged;
         }
-        dvui.labelNoFmt(@src(), "Change species", .{}, .{ .min_size_content = .{ .h = 44 }, .background = true, .color_fill = .{ .color = theme.chip }, .color_text = .{ .color = theme.tab_off_ink }, .border = .all(2) });
         lib.label(@src(), "Other guesses", .{});
         for (item.tags[1..], 1..) |guess, i| {
             if (dvui.button(@src(), lib.fmt("{s}  {d} percent", .{ lib.logic.common(guess), @as(u32, @intFromFloat(@round(guess.confidence * 100))) }), .{}, .{ .id_extra = i, .min_size_content = .{ .h = 44 } })) {
@@ -60,6 +63,7 @@ pub fn draw(state: *lib.State, store: api.Store) void {
             }
         }
     } else lib.badge(item.photo.state);
+    if (dvui.button(@src(), "Change species", .{}, .{ .tag = "heronin-change-species", .min_size_content = .{ .h = 44 } })) state.picking = true;
     if (item.photo.state == .new or item.photo.state == .failed) {
         if (dvui.button(@src(), "Tag this", .{}, .{ .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = theme.orange[0] } })) {
             if (state.tag_queue) |q| q.ask(item.photo.id);

@@ -73,3 +73,19 @@ test "species name matching uses ASCII word prefixes" {
     try expect(m.species.matches("Ardea alba", "ardea"));
     try expect(!m.species.matches("Great Blue Heron", "eron"));
 }
+
+test "species search preserves table order and output capacity" {
+    var buf: [12]m.Species = undefined;
+    const herons = m.species.search("her", &buf);
+    try std.testing.expectEqual(@as(usize, 1), herons.len);
+    try std.testing.expectEqualStrings("grbher3", herons[0].code);
+    const ardea = m.species.search("ardea", &buf);
+    try std.testing.expectEqual(@as(usize, 2), ardea.len);
+    try std.testing.expectEqualStrings("grbher3", ardea[0].code);
+    try std.testing.expectEqualStrings("greegr", ardea[1].code);
+    try std.testing.expectEqualStrings("rewbla", m.species.search("winged", &buf)[0].code);
+    try std.testing.expectEqual(@as(usize, 12), m.species.search("", &buf).len);
+    for (buf, m.species.table) |s, expected| try std.testing.expectEqualStrings(expected.code, s.code);
+    try std.testing.expectEqual(@as(usize, 3), m.species.search("", buf[0..3]).len);
+    try std.testing.expectEqual(@as(usize, 0), m.species.search("", buf[0..0]).len);
+}
