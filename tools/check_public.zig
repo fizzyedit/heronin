@@ -117,6 +117,10 @@ fn violation(path: []const u8, data: []const u8) ?Rule {
                     const start = pos;
                     while (pos < data.len and data[pos] != quote and data[pos] != '\n') : (pos += 1) {}
                     if (pos > start and pos < data.len and data[pos] == quote) return .client_secret;
+                } else {
+                    const start = pos;
+                    while (pos < data.len and (std.ascii.isAlphanumeric(data[pos]) or data[pos] == '_' or data[pos] == '-' or data[pos] == '.')) : (pos += 1) {}
+                    if (pos - start >= 16 and std.mem.indexOfScalar(u8, data[start..pos], '.') == null) return .client_secret;
                 }
             }
         }
@@ -188,9 +192,18 @@ fn scanTree(io: std.Io, path: []const u8) !?Rule {
     return null;
 }
 
-test "client secret literals only; generic secret is allowed" {
-    for ([_][]const u8{ "client_" ++ "secret = \"value\"", "{\"client_" ++ "secret\": 'value'}" }) |data|
+test "client secret literals and unquoted tokens; generic secret is allowed" {
+    for ([_][]const u8{
+        "client_" ++ "secret = \"value\"",
+        "{\"client_" ++ "secret\": 'value'}",
+        "client_" ++ "secret: abcdef0123456789",
+        "?client_" ++ "secret=abcdef0123456789&next=1",
+        "-d client_" ++ "secret=abcdef0123456789",
+        "client_" ++ "secret = abcdef01234567_-",
+    }) |data|
         try std.testing.expectEqual(Rule.client_secret, violation("config.txt", data));
     for ([_][]const u8{ "client_" ++ "secret = config.secret", "client_" ++ "secret: []const u8", "client_" ++ "secret = \"\"", "client_" ++ "secret = null", "secret = \"value\"", "other_client_" ++ "secret = \"value\"" }) |data|
+        try std.testing.expectEqual(null, violation("config.txt", data));
+    for ([_][]const u8{ "client_" ++ "secret = abcdef012345678", "client_" ++ "secret = config.long_secret_field", "client_" ++ "secret = abcdef0123456789.suffix" }) |data|
         try std.testing.expectEqual(null, violation("config.txt", data));
 }
