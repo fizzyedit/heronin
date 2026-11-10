@@ -1,4 +1,6 @@
 .{
+    // GeoNames, a per-country file from download.geonames.org/export/dump (CC BY 4.0).
+    .gazetteer = "geonames.txt",
     .port = 8790,
     .threshold = 0.85,
     .tagger = "fake",

@@ -21,6 +21,7 @@ pub fn draw(settings: *tags.Settings) void {
     toggle(0, "Send previews to the tagging agent", &settings.auto);
     toggle(1, lib.fmt("Ask me below {d} percent", .{auto_accept_shown}), &settings.ask_below);
     toggle(2, "Use location to narrow guesses", &settings.use_place);
+    lib.label(@src(), "Place names: GeoNames (CC BY 4.0), looked up on your Heronin server", .{ .id_extra = 0 });
     lib.label(@src(), "Only the place is sent, never the photo's location data", .{});
 }
 fn toggle(id: usize, text: []const u8, value: *bool) void {

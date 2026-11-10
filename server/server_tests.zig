@@ -114,7 +114,7 @@ fn handle(raw: []const u8, fail: bool) ![]u8 {
     var http = std.http.Server.init(&reader, &writer.writer);
     var request = try http.receiveHead();
     var fake: Fake = .{ .fail = fail };
-    try server.handle(&request, arena.allocator(), fake.tagger(), logic.default_threshold, 42);
+    try server.handle(&request, arena.allocator(), fake.tagger(), logic.default_threshold, 42, .{});
     return a.dupe(u8, writer.written());
 }
 fn post(path: []const u8, body: []const u8, fail: bool) ![]u8 {
@@ -193,4 +193,28 @@ test "clean keeps the five highest known candidates in descending stable order" 
     const cleaned = wire.clean(answer(&candidates, "fake"));
     try equal(@as(usize, 5), cleaned.candidates.len);
     for (cleaned.candidates, 0..) |c, i| try strings(model.species.table[6 - i].code, c.species);
+}
+
+test "local place routes validate method and coordinates" {
+    const places = @import("place_names_tests.zig");
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const g = try places.fixture(arena.allocator());
+    for ([_]struct { target: []const u8, method: []const u8 = "GET", status: []const u8 = "200", body: []const u8 = "{\"name\":\"Sea Mount\"}" }{
+        .{ .target = "/api/place?lat=60&lon=-30" },
+        .{ .target = "/heronin/api/place?lat=60&lon=-30" },
+        .{ .target = "/api/place?lat=0&lon=0.09", .body = "{\"name\":null}" },
+        .{ .target = "/api/place?lat=91&lon=0", .status = "400", .body = "{}" },
+        .{ .target = "/api/place", .method = "POST", .status = "405", .body = "{\"error\":\"method not allowed\"}" },
+    }) |case| {
+        const raw = try std.fmt.allocPrint(arena.allocator(), "{s} {s} HTTP/1.1\r\nHost: localhost\r\n\r\n", .{ case.method, case.target });
+        var reader = std.Io.Reader.fixed(raw);
+        var writer: std.Io.Writer.Allocating = .init(arena.allocator());
+        var http = std.http.Server.init(&reader, &writer.writer);
+        var request = try http.receiveHead();
+        var fake: Fake = .{};
+        try server.handle(&request, arena.allocator(), fake.tagger(), 0.85, 0, g);
+        try expect(std.mem.eql(u8, writer.written()[9..12], case.status));
+        try expect(std.mem.endsWith(u8, writer.written(), case.body));
+    }
 }

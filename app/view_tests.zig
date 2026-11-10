@@ -1,3 +1,6 @@
+test {
+    _ = @import("places_tests.zig");
+}
 const std = @import("std");
 const dvui = @import("dvui");
 const root = @import("views/root.zig");
@@ -69,7 +72,7 @@ fn readableFrame() !dvui.App.Result {
         for (state.items, 0..) |item, i| {
             const title = try dvui.testing.tagGet(library.fmt("tile-title-{d}", .{i}));
             try expectTextFits(library.logic.tileTitle(item), .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), title.rect);
-            const place = library.logic.placeText(@import("model").places.placeOf(item.photo, state.photos), state.places);
+            const place = library.logic.placeText(@import("model").places.placeOf(item.photo, state.photos), state.places, null);
             const text = library.logic.tileMeta(dvui.currentWindow().arena(), item, place, library.day(item.photo));
             const meta = try dvui.testing.tagGet(library.fmt("tile-place-{d}", .{i}));
             try expectTextFits(text, dvui.Font.theme(.body).withSize(theme.size.meta), meta.rect);
@@ -258,6 +261,22 @@ test "By place rows select only their member species and clear on places reload"
     state.segment = .by_place;
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("heronin-place-0");
+    const places = library.places_client;
+    defer places.names.deinit();
+    _ = try dvui.testing.step(struct {
+        fn frame() !dvui.App.Result {
+            const view = @import("views/places.zig");
+            for (view.groups(&state).clusters) |c| if (c.place == null) {
+                places.names.answers = try places.names.arena.allocator().alloc(places.Answer, 1);
+                places.names.answers[0] = .{ .lat = c.lat, .lon = c.lon };
+                places.done(&places.names, .{ .status = 200, .body = try places.names.arena.allocator().dupe(u8, "{\"name\":\"Sea Mount\"}") });
+                try std.testing.expectEqualStrings("near Sea Mount", view.name(&state, c));
+                break;
+            };
+            return .ok;
+        }
+    }.frame);
+    try dvui.testing.settle(frame);
     _ = try dvui.testing.step(placeChecksFrame);
     try tap("heronin-place-0");
     try std.testing.expectEqual(@as(?usize, 0), state.at_cluster);

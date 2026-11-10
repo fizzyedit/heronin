@@ -66,7 +66,7 @@ pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void
             lib.species(e.species.common, theme.size.species);
             var place: ?[]const u8 = null;
             for (photos[0..n]) |photo| if (std.mem.eql(u8, photo.id, e.first)) {
-                place = lib.logic.placeText(model.places.placeOf(photo, state.photos), state.places);
+                place = lib.logic.placeText(model.places.placeOf(photo, state.photos), state.places, if (model.places.placeOf(photo, state.photos)) |point| lib.places_client.near(&lib.places_client.names, point) else null);
                 break;
             };
             lib.label(@src(), if (e.first_at) |at| lib.fmt("First seen {s}{s}{s}", .{ day(at, now), if (place != null) " · " else "", place orelse "" }) else "First seen: date unknown", .{ .font = dvui.Font.theme(.body).withSize(theme.size.meta) });

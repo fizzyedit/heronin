@@ -38,6 +38,7 @@ pub fn groups(state: *lib.State) Groups {
 }
 pub fn name(state: *lib.State, c: model.places.Cluster) []const u8 {
     for (state.places) |p| if (c.place == p.id) return p.name;
+    if (@import("../places_client.zig").near(&@import("../places_client.zig").names, c)) |n| return lib.fmt("near {s}", .{n});
     return model.places.unnamed;
 }
 pub fn matches(g: Groups, state: *lib.State, code: []const u8, query: []const u8) bool {
