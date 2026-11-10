@@ -13,9 +13,14 @@ const Fixture = struct {
     sign_in: auth.Auth = undefined,
     mode: enum { ok, denied, audience, unverified, expired, malformed, issuer, exchange, no_refresh } = .ok,
     calls: usize = 0,
+    tags: usize = 0,
+    refreshes: usize = 0,
+    revokes: usize = 0,
+    trouble: enum { none, invalid, unavailable, revoke } = .none,
+    cookie: []const u8 = "",
     fn init(self: *Fixture) !void {
         self.tmp = std.testing.tmpDir(.{});
-        self.sign_in = .{ .gpa = a, .io = io, .data = try std.fs.path.join(self.arena.allocator(), &.{ std.testing.TmpDir.parent_dir_path, &self.tmp.sub_path }), .random = self.random.random(), .google = .{ .ctx = self, .exchangeFn = exchange }, .config = .{ .id = "test-id", .secret = "", .public_url = "https://example.invalid/heronin", .allow = &.{"bird@example.invalid"} } };
+        self.sign_in = .{ .gpa = a, .io = io, .data = try std.fs.path.join(self.arena.allocator(), &.{ std.testing.TmpDir.parent_dir_path, &self.tmp.sub_path }), .random = self.random.random(), .google = .{ .ctx = self, .exchangeFn = exchange, .refreshFn = refresh, .revokeFn = revoke }, .config = .{ .id = "test-id", .secret = "", .public_url = "https://example.invalid/heronin", .allow = &.{"bird@example.invalid"} } };
     }
     fn deinit(self: *Fixture) void {
         self.sign_in.deinit();
@@ -34,18 +39,35 @@ const Fixture = struct {
         const jwt = try std.fmt.allocPrint(alloc, "header.{s}.signature", .{std.base64.url_safe_no_pad.Encoder.encode(encoded, json)});
         return .{ .access_token = "short", .expires_in = 3600, .refresh_token = if (self.mode == .no_refresh) null else "refresh", .id_token = if (self.mode == .malformed) "broken" else jwt };
     }
+    fn tag(ctx: *anyopaque, alloc: std.mem.Allocator, input: @import("tagger.zig").Request) !@import("tagger.zig").Answer {
+        const self: *Fixture = @ptrCast(@alignCast(ctx));
+        self.tags += 1;
+        var fake: @import("fake_tagger.zig").Fake = .{};
+        return fake.tagger().tag(alloc, input);
+    }
+    fn refresh(ctx: *anyopaque, _: std.mem.Allocator, _: []const u8) !google.Fresh {
+        const self: *Fixture = @ptrCast(@alignCast(ctx));
+        self.refreshes += 1;
+        if (self.trouble == .invalid) return error.InvalidGrant;
+        if (self.trouble == .unavailable) return error.Unavailable;
+        return .{ .access_token = "access", .expires_in = 3600 };
+    }
+    fn revoke(ctx: *anyopaque, _: std.mem.Allocator, _: []const u8) !void {
+        const self: *Fixture = @ptrCast(@alignCast(ctx));
+        self.revokes += 1;
+        if (self.trouble == .revoke) return error.Unavailable;
+    }
     fn request(self: *Fixture, method: []const u8, target: []const u8, now: i64) ![]const u8 {
         var arena: std.heap.ArenaAllocator = .init(a);
         defer arena.deinit();
         const alloc = arena.allocator();
         const body = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"agent\":\"ours\",\"auto_accept\":true}";
-        const raw = try std.fmt.allocPrint(alloc, "{s} {s} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {d}\r\n\r\n{s}", .{ method, target, body.len, body });
+        const raw = try std.fmt.allocPrint(alloc, "{s} {s} HTTP/1.1\r\nHost: localhost\r\nCookie: {s}\r\nContent-Length: {d}\r\n\r\n{s}", .{ method, target, self.cookie, body.len, body });
         var reader = std.Io.Reader.fixed(raw);
         var writer: std.Io.Writer.Allocating = .init(alloc);
         var http = std.http.Server.init(&reader, &writer.writer);
         var r = try http.receiveHead();
-        var fake: @import("fake_tagger.zig").Fake = .{};
-        try server.handleAuth(&r, alloc, fake.tagger(), 0.85, now, .{}, &self.sign_in);
+        try server.handleAuth(&r, alloc, .{ .ctx = self, .tagFn = tag }, 0.85, now, .{}, &self.sign_in);
         return self.arena.allocator().dupe(u8, writer.written());
     }
     fn callback(self: *Fixture, state: []const u8, now: i64) ![]const u8 {
@@ -71,6 +93,7 @@ test "unconfigured login is 503 and tag remains public; auth routes require GET 
     for ([_][]const u8{ "/api/login", "/heronin/api/login" }) |path| {
         const response = try f.request("GET", path, 100);
         try status(response, "503");
+        try equal("application/json", header(response, "content-type: "));
         try expect(std.mem.endsWith(u8, response, "{\"error\":\"sign-in not configured\"}"));
         try status(try f.request("POST", path, 100), "405");
     }
@@ -168,4 +191,82 @@ test "formBody percent encodes values" {
     const body = try google.formBody(a, &.{ .{ "code", "a b&c" }, .{ "other", "+=/" } });
     defer a.free(body);
     try equal("code=a%20b%26c&other=%2B%3D%2F", body);
+}
+
+test "guard persistence token refresh errors and logout lifecycle" {
+    var f: Fixture = .{};
+    try f.init();
+    defer f.deinit();
+    try status(try f.request("POST", "/api/tag", 100), "401");
+    try std.testing.expectEqual(@as(usize, 0), f.tags);
+    const first = try f.callback(&(try f.login()), 100);
+    f.cookie = header(first, "set-cookie: ");
+    try status(try f.request("POST", "/api/tag", 100), "200");
+    var loaded: auth.Auth = .{ .gpa = a, .io = io, .data = f.sign_in.data, .google = f.sign_in.google, .random = f.random.random() };
+    defer loaded.deinit();
+    try loaded.load(f.arena.allocator(), 101);
+    try equal("Bird@Example.invalid", loaded.session(f.cookie, 101).?);
+    const disk = try f.tmp.dir.readFileAlloc(io, "sessions", f.arena.allocator(), .limited(65536));
+    try expect(std.mem.indexOf(u8, disk, f.cookie[16..80]) == null);
+    if (@import("builtin").os.tag != .windows) try std.testing.expectEqual(@as(u32, 0o600), (try f.tmp.dir.statFile(io, "sessions", .{})).permissions.toMode() & 0o777);
+    f.cookie = try std.fmt.allocPrint(f.arena.allocator(), "heronin_session=zz; {s}", .{f.cookie});
+    const token = try f.request("GET", "/heronin/api/token", 100);
+    try status(token, "200");
+    try equal("no-store", header(token, "cache-control: "));
+    try status(try f.request("GET", "/api/token", 200), "200");
+    try std.testing.expectEqual(@as(usize, 1), f.refreshes);
+    try status(try f.request("GET", "/api/token", 3600), "200");
+    try std.testing.expectEqual(@as(usize, 2), f.refreshes);
+    f.trouble = .unavailable;
+    try status(try f.request("GET", "/api/token", 7100), "502");
+    const token_path = "tokens/" ++ std.fmt.bytesToHex(blk: {
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash("bird@example.invalid", &hash, .{});
+        break :blk hash;
+    }, .lower);
+    f.trouble = .invalid;
+    try status(try f.request("GET", "/api/token", 7100), "401");
+    try status(try f.request("GET", "/api/token", 7100), "401");
+    try std.testing.expectError(error.FileNotFound, f.tmp.dir.openFile(io, token_path, .{}));
+    const second = try f.callback(&(try f.login()), 100);
+    f.sign_in.gpa.free(f.sign_in.sessions.items[1].email);
+    f.sign_in.sessions.items[1].email = try a.dupe(u8, "bird@example.invalid");
+    f.trouble = .none;
+    try status(try f.request("GET", "/api/logout", 100), "405");
+    const logout = try f.request("POST", "/api/logout", 100);
+    try status(logout, "204");
+    try expect(std.mem.indexOf(u8, logout, "Max-Age=0") != null);
+    try std.testing.expectEqual(@as(usize, 0), f.revokes);
+    try equal("refresh", try f.tmp.dir.readFileAlloc(io, token_path, f.arena.allocator(), .limited(100)));
+    try status(try f.request("GET", "/api/token", 100), "401");
+    f.cookie = header(second, "set-cookie: ");
+    try status(try f.request("GET", "/api/token", 100), "200");
+    f.trouble = .revoke;
+    try status(try f.request("POST", "/heronin/api/logout", 100), "204");
+    try std.testing.expectEqual(@as(usize, 1), f.revokes);
+    try std.testing.expectError(error.FileNotFound, f.tmp.dir.openFile(io, token_path, .{}));
+    f.cookie = header(try f.callback(&(try f.login()), 100), "set-cookie: ");
+    f.trouble = .none;
+    try status(try f.request("POST", "/api/logout", 100), "204");
+    try std.testing.expectEqual(@as(usize, 2), f.revokes);
+}
+test "load drops expired broken and earliest of 33 sessions" {
+    var f: Fixture = .{};
+    try f.init();
+    defer f.deinit();
+    var text: std.Io.Writer.Allocating = .init(f.arena.allocator());
+    try text.writer.writeAll("broken\n0000 1 bird@example.invalid\n");
+    for (0..34) |i| {
+        var hash: [32]u8 = @splat(0);
+        hash[0] = @intCast(i);
+        try text.writer.print("{s} {d} bird@example.invalid\n", .{ std.fmt.bytesToHex(hash, .lower), if (i == 33) @as(usize, 1) else 200 + i });
+    }
+    var file = try f.tmp.dir.createFile(io, "sessions", .{});
+    try file.writeStreamingAll(io, text.written());
+    file.close(io);
+    try f.sign_in.load(f.arena.allocator(), 100);
+    try std.testing.expectEqual(@as(usize, 32), f.sign_in.sessions.items.len);
+    for (f.sign_in.sessions.items) |s| try expect(s.expires >= 201);
+    const saved = try f.tmp.dir.readFileAlloc(io, "sessions", f.arena.allocator(), .limited(65536));
+    try expect(std.mem.indexOf(u8, saved, "broken") == null);
 }
