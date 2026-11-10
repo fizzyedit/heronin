@@ -47,6 +47,11 @@ pub fn build(b: *std.Build) !void {
     const check_run = b.addRunArtifact(checker);
     check_run.setCwd(b.path("."));
     check_run.has_side_effects = true;
+    const sw_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tests/check_public/sw_test.zig"), .target = b.graph.host, .optimize = optimize }) });
+    sw_tests.root_module.link_libc = true;
+    const sw_test_run = b.addRunArtifact(sw_tests);
+    sw_test_run.setCwd(b.path("."));
+    sw_test_run.has_side_effects = true;
     const checker_tests = b.addTest(.{ .root_module = checker_module });
     const checker_test_run = b.addRunArtifact(checker_tests);
     checker_test_run.setCwd(b.path("."));
@@ -91,6 +96,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(app_tests).step);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&checker_test_run.step);
+    test_step.dependOn(&sw_test_run.step);
     const server_model = b.createModule(.{ .root_source_file = b.path("model/model.zig"), .target = b.graph.host, .optimize = optimize });
     const server_module = b.createModule(.{ .root_source_file = b.path("server/main.zig"), .target = b.graph.host, .optimize = optimize });
     server_module.addImport("model", server_model);

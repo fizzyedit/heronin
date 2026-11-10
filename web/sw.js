@@ -1,16 +1,27 @@
 const CACHE = 'heronin-shell-v2';
 const ROOT = '/heronin/';
 const SHELL = [ROOT, ROOT + 'index.html', ROOT + 'manifest.webmanifest',
-  ROOT + 'fizzy.js', ROOT + 'web.js', ROOT + 'web.wasm',
-  ROOT + 'fizzy-worker.js', ROOT + 'NotoSansKR-Regular.ttf'];
+  ROOT + 'NotoSansKR-Regular.ttf'];
+// Program files are cached on demand with the page's exact cache-busting URLs.
+async function store(cache, request, response) {
+  await cache.put(request, response);
+  const url = new URL(request.url);
+  for (const key of await cache.keys()) {
+    const old = new URL(key.url);
+    if (old.origin === url.origin && old.pathname === url.pathname &&
+        old.search !== url.search) await cache.delete(key);
+  }
+}
 async function networkFirst(request) {
   const cache = await caches.open(CACHE);
   try {
     const response = await fetch(request, {cache: 'no-store'});
-    if (response.ok) await cache.put(request, response.clone());
+    if (response.ok) await store(cache, request, response.clone());
     return response;
   } catch {
-    return (await cache.match(request)) || Response.error();
+    return (await cache.match(request)) ||
+      (request.mode === 'navigate' && await cache.match(ROOT + 'index.html')) ||
+      Response.error();
   }
 }
 self.addEventListener('install', event => {
@@ -35,7 +46,7 @@ self.addEventListener('fetch', event => {
     const cached = await cache.match(event.request);
     if (cached) return cached;
     const response = await fetch(event.request);
-    if (response.ok) await cache.put(event.request, response.clone());
+    if (response.ok) await store(cache, event.request, response.clone());
     return response;
   }));
 });

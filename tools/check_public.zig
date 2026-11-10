@@ -105,13 +105,19 @@ fn violation(path: []const u8, data: []const u8) ?Rule {
             if (end - i - 7 >= 20) return .bearer;
         }
         const key = "client_secret";
-        if (std.mem.startsWith(u8, data[i..], key)) {
+        if (std.mem.startsWith(u8, data[i..], key) and (i == 0 or (!std.ascii.isAlphanumeric(data[i - 1]) and data[i - 1] != '_'))) {
             var pos = i + key.len;
             while (pos < data.len and (std.ascii.isWhitespace(data[pos]) or data[pos] == '"' or data[pos] == '\'')) : (pos += 1) {}
             if (pos < data.len and (data[pos] == ':' or data[pos] == '=')) {
                 pos += 1;
-                while (pos < data.len and (std.ascii.isWhitespace(data[pos]) or data[pos] == '"' or data[pos] == '\'')) : (pos += 1) {}
-                if (pos < data.len and std.mem.indexOfScalar(u8, ",;}\r\n", data[pos]) == null) return .client_secret;
+                while (pos < data.len and std.ascii.isWhitespace(data[pos])) : (pos += 1) {}
+                if (pos < data.len and (data[pos] == '"' or data[pos] == '\'')) {
+                    const quote = data[pos];
+                    pos += 1;
+                    const start = pos;
+                    while (pos < data.len and data[pos] != quote and data[pos] != '\n') : (pos += 1) {}
+                    if (pos > start and pos < data.len and data[pos] == quote) return .client_secret;
+                }
             }
         }
     }
@@ -130,7 +136,10 @@ pub fn main(init: std.process.Init) !void {
     var failed = false;
     while (paths.next()) |path| {
         if (path.len == 0 or std.mem.startsWith(u8, path, "tests/check_public/")) continue;
-        const data = try std.Io.Dir.cwd().readFileAlloc(init.io, path, allocator, .unlimited);
+        const data = std.Io.Dir.cwd().readFileAlloc(init.io, path, allocator, .unlimited) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
         if (violation(path, data)) |rule| {
             std.debug.print("{s}: {s}\n", .{ path, @tagName(rule) });
             failed = true;
@@ -177,4 +186,11 @@ fn scanTree(io: std.Io, path: []const u8) !?Rule {
         if (violation(normalized, data)) |rule| return rule;
     }
     return null;
+}
+
+test "client secret literals only; generic secret is allowed" {
+    for ([_][]const u8{ "client_" ++ "secret = \"value\"", "{\"client_" ++ "secret\": 'value'}" }) |data|
+        try std.testing.expectEqual(Rule.client_secret, violation("config.txt", data));
+    for ([_][]const u8{ "client_" ++ "secret = config.secret", "client_" ++ "secret: []const u8", "client_" ++ "secret = \"\"", "client_" ++ "secret = null", "secret = \"value\"", "other_client_" ++ "secret = \"value\"" }) |data|
+        try std.testing.expectEqual(null, violation("config.txt", data));
 }
