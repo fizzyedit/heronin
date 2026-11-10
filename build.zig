@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) !void {
     tests.root_module.addImport("theme", b.createModule(.{ .root_source_file = b.path("app/theme.zig"), .target = target, .optimize = optimize }));
     tests.root_module.import_table.get("theme").?.addImport("dvui", fizzy.framework(fizzy_dep, .native).dvui);
     const test_step = b.step("test", "Test models, theme, and public rules");
+    const sw_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tests/check_public/sw_rule.zig"), .target = target, .optimize = optimize }) });
+    sw_tests.root_module.addAnonymousImport("sw_source", .{ .root_source_file = b.path("web/sw.js") });
+    test_step.dependOn(&b.addRunArtifact(sw_tests).step);
     const app_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/app_tests.zig"), .target = target, .optimize = optimize }) });
     app_tests.root_module.addImport("model", model);
     app_tests.root_module.addImport("wire", wire);

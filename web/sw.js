@@ -3,6 +3,19 @@ const ROOT = '/heronin/';
 const SHELL = [ROOT, ROOT + 'index.html', ROOT + 'manifest.webmanifest',
   ROOT + 'fizzy.js', ROOT + 'web.js', ROOT + 'web.wasm',
   ROOT + 'fizzy-worker.js', ROOT + 'NotoSansKR-Regular.ttf'];
+async function store(cache, request, response) {
+  await cache.put(request, response.clone());
+  const stored = new URL(request.url);
+  if (request.mode === 'navigate' || !stored.search ||
+      !['web.wasm', 'web.js', 'fizzy.js', 'fizzy-worker.js'].some(name => stored.pathname === ROOT + name)) return;
+  // Rule pruneSuperseded: assets only, same pathname, different search, after a successful store.
+  for (const key of await cache.keys()) {
+    const cached = new URL(key.url);
+    if (cached.pathname === stored.pathname && cached.search !== stored.search) {
+      await cache.delete(key);
+    }
+  }
+}
 async function networkFirst(request) {
   const cache = await caches.open(CACHE);
   try {
@@ -10,7 +23,8 @@ async function networkFirst(request) {
     if (response.ok) await cache.put(request, response.clone());
     return response;
   } catch {
-    return (await cache.match(request)) || Response.error();
+    return (await cache.match(request)) ||
+      (request.mode === 'navigate' && await cache.match(ROOT)) || Response.error();
   }
 }
 self.addEventListener('install', event => {
@@ -35,7 +49,7 @@ self.addEventListener('fetch', event => {
     const cached = await cache.match(event.request);
     if (cached) return cached;
     const response = await fetch(event.request);
-    if (response.ok) await cache.put(event.request, response.clone());
+    if (response.ok) await store(cache, event.request, response);
     return response;
   }));
 });
