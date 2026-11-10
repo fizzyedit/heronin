@@ -1,6 +1,7 @@
 .{
     // GeoNames, a per-country file from download.geonames.org/export/dump (CC BY 4.0).
     .gazetteer = "geonames.txt",
+    .google = .{ .id = "", .secret = "", .public_url = "https://example.invalid/heronin", .allow = .{} },
     .port = 8790,
     .threshold = 0.85,
     .tagger = "fake",

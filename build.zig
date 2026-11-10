@@ -105,5 +105,9 @@ pub fn build(b: *std.Build) !void {
     server_tests.root_module.addAnonymousImport("gazetteer_fixture", .{ .root_source_file = b.path("tests/fixtures/gazetteer_sea.txt") });
     server_tests.root_module.addAnonymousImport("fake_tags", .{ .root_source_file = b.path("tests/fixtures/fake_tags.json") });
     test_step.dependOn(&b.addRunArtifact(server_tests).step);
+    const auth_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("server/auth_tests.zig"), .target = b.graph.host, .optimize = optimize }) });
+    auth_tests.root_module.addImport("model", server_model);
+    auth_tests.root_module.addAnonymousImport("fake_tags", .{ .root_source_file = b.path("tests/fixtures/fake_tags.json") });
+    test_step.dependOn(&b.addRunArtifact(auth_tests).step);
     b.step("check-public", "Check tracked files for private content").dependOn(&check_run.step);
 }
