@@ -9,22 +9,36 @@ const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
 }
-const Route = enum { tag, place, login, callback };
+const Route = enum { tag, place, login, callback, token, logout };
 fn route(target: []const u8) ?Route {
     const path = if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target;
-    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place }, .{ "/api/login", .login }, .{ "/api/oauth/callback", .callback } });
+    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place }, .{ "/api/login", .login }, .{ "/api/oauth/callback", .callback }, .{ "/api/token", .token }, .{ "/api/logout", .logout } });
     return paths.get(path[0 .. std.mem.indexOfScalar(u8, path, '?') orelse path.len]);
 }
 pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer) !void {
     return handleAuth(request, allocator, tagger, threshold, now, gazetteer, null);
 }
 pub fn handleAuth(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth) !void {
-    if (request.head.content_length orelse 0 > cap) return respond(request, .payload_too_large, "{\"error\":\"body too large\"}");
     const matched = route(request.head.target) orelse return respond(request, .not_found, "{\"error\":\"not found\"}");
-    if (request.head.method != (if (matched != .tag) std.http.Method.GET else .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched != .tag) "GET" else "POST" }, .{ .name = "content-type", .value = "application/json" } } });
-    if (matched == .login or matched == .callback) {
+    if (request.head.method != (if (matched != .tag and matched != .logout) std.http.Method.GET else .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched != .tag and matched != .logout) "GET" else "POST" }, .{ .name = "content-type", .value = "application/json" } } });
+    if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout)) {
+        var headers = request.iterateHeaders();
+        var cookie: ?[]const u8 = null;
+        while (headers.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "cookie")) {
+            cookie = h.value;
+        };
+        if (configured.session(cookie, now) == null) return respond(request, .unauthorized, "{\"error\":\"sign in\"}");
+    };
+    if (request.head.content_length orelse 0 > cap) return respond(request, .payload_too_large, "{\"error\":\"body too large\"}");
+    if (matched == .login or matched == .callback or matched == .token or matched == .logout) {
         const configured = sign_in orelse return respond(request, .service_unavailable, "{\"error\":\"sign-in not configured\"}");
-        return configured.handle(request, allocator, now, matched == .login);
+        return configured.handle(request, allocator, now, switch (matched) {
+            .login => .login,
+            .callback => .callback,
+            .token => .token,
+            .logout => .logout,
+            else => unreachable,
+        });
     }
     if (matched == .place) {
         var lat: f64 = std.math.nan(f64);
@@ -87,6 +101,7 @@ pub fn main(init: std.process.Init) !void {
     var random = std.Random.DefaultCsprng.init(seed);
     var sign_in: auth.Auth = .{ .gpa = init.gpa, .io = init.io, .data = init.environ_map.get("HERONIN_DATA") orelse ".", .config = config.google, .google = real.google(), .random = random.random() };
     defer sign_in.deinit();
+    if (config.google != null) try sign_in.load(allocator, std.Io.Clock.real.now(init.io).toSeconds());
     var fake: Fake = .{};
     while (true) {
         const stream = listener.accept(init.io) catch |err| {
