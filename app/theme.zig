@@ -20,6 +20,14 @@ pub const working: Status = .{ .fill = mustard[0], .ink = ink };
 pub const waiting: Status = .{ .fill = chip, .ink = brown[0] };
 pub const other: Status = .{ .fill = brown[0], .ink = card };
 pub const failed: Status = .{ .fill = brown[0], .ink = card };
+pub const size = struct {
+    pub const title = 28;
+    pub const species = 26;
+    pub const tile_species = 16;
+    pub const body = 15;
+    pub const meta = 13;
+    pub const small = 12;
+};
 pub const species_face = "Nunito";
 pub const body_face = "Nunito";
 pub const title_face = "Nunito";
@@ -50,8 +58,8 @@ pub fn light(base: dvui.Theme) dvui.Theme {
     t.app1 = style(red[0], card, brown[0]);
     t.app2 = style(olive[0], card, brown[0]);
     t.app3 = style(mustard[0], ink, brown[0]);
-    t.font_body = .find(.{ .family = body_face, .size = 16 });
-    t.font_title = .find(.{ .family = title_face, .size = 28, .weight = .bold });
+    t.font_body = .find(.{ .family = body_face, .size = size.body });
+    t.font_title = .find(.{ .family = title_face, .size = size.title, .weight = .bold });
     t.font_heading = .find(.{ .family = title_face, .size = 18, .weight = .bold });
     t.font_mono = t.font_body;
     t.corner = .round(0);
