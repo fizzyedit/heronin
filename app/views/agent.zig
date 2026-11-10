@@ -17,7 +17,7 @@ pub fn draw(settings: *tags.Settings) void {
         } else dvui.labelNoFmt(@src(), name ++ " · " ++ hint, .{}, opts.override(.{ .background = true, .color_text = .{ .color = theme.tab_off_ink } }));
     }
     lib.label(@src(), "Connect", .{});
-    inline for (.{ "Address", "Key (kept on your Heronin server)", "Test with one photo" }, 0..) |text, i| lib.label(@src(), text, .{ .id_extra = i, .min_size_content = .{ .h = 44 }, .color_text = .{ .color = theme.tab_off_ink }, .background = true, .color_fill = .{ .color = theme.chip } });
+    inline for (.{ "Address", "Key (kept on your Heronin server)", "Test with one photo" }, 0..) |text, i| dvui.labelNoFmt(@src(), text, .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-connect-{d}", .{i}), .min_size_content = .{ .h = 44 }, .color_text = .{ .color = theme.tab_off_ink }, .background = true, .color_fill = .{ .color = theme.chip } });
     toggle(0, "Send previews to the tagging agent", &settings.auto);
     toggle(1, lib.fmt("Ask me below {d} percent", .{auto_accept_shown}), &settings.ask_below);
     toggle(2, "Use location to narrow guesses", &settings.use_place);

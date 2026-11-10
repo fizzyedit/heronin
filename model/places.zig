@@ -22,10 +22,7 @@ pub fn namedPlace(point: anytype, saved: []const model.Place) ?model.Place {
     return nearest;
 }
 
-pub fn placeLabel(photo: model.Photo, saved: []const model.Place) ?[]const u8 {
-    const point = photo.place orelse return null;
-    return if (namedPlace(point, saved)) |place| place.name else "Unnamed place";
-}
+pub const unnamed = "Unnamed place";
 
 pub const Source = enum { photo, nearby, phone };
 pub const Located = struct { lat: f64, lon: f64, src: Source };

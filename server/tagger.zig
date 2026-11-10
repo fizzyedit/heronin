@@ -3,8 +3,8 @@ const model = @import("model");
 pub const Request = struct {
     md5: model.Md5,
     image: []const u8,
-    taken_at: ?i64,
-    place: ?struct { lat: f64, lon: f64 },
+    taken_at: ?i64 = null,
+    place: ?struct { lat: f64, lon: f64 } = null,
     agent: model.QueueItem.Agent,
     auto_accept: bool,
 };
@@ -34,7 +34,11 @@ pub fn clean(answer: Answer) Answer {
         c.note = cut(c.note, 110);
         answer.candidates[n] = c;
         n += 1;
-        if (n == 5) break;
     }
-    return .{ .candidates = answer.candidates[0..n], .model = answer.model };
+    std.mem.sort(Candidate, answer.candidates[0..n], {}, struct {
+        fn higher(_: void, x: Candidate, y: Candidate) bool {
+            return x.confidence > y.confidence;
+        }
+    }.higher);
+    return .{ .candidates = answer.candidates[0..@min(n, 5)], .model = answer.model };
 }

@@ -4,8 +4,8 @@ const api = @import("store.zig");
 pub const wire = @import("wire");
 pub const Settings = struct { auto: bool = false, ask_below: bool = true, use_place: bool = true, agent: model.QueueItem.Agent = .ours };
 // Native uses HERONIN_TAG_URL, defaulting to the K4a server on port 8790.
-pub fn endpoint(a: std.mem.Allocator, override: ?[]const u8) ![]const u8 {
-    return std.fmt.allocPrint(a, "{s}/heronin/api/tag", .{std.mem.trimEnd(u8, override orelse "http://127.0.0.1:8790", "/")});
+pub fn serverUrl(a: std.mem.Allocator, override: ?[]const u8, path: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{s}/heronin/api/{s}", .{ std.mem.trimEnd(u8, override orelse "http://127.0.0.1:8790", "/"), path });
 }
 pub const TagQueue = struct {
     asked: ?[]const u8 = null,
@@ -27,6 +27,7 @@ pub const TagQueue = struct {
         self.* = .{ .settings = self.settings };
     }
     pub fn ask(self: *TagQueue, id: []const u8) void {
+        _ = self.attempts.remove(id);
         self.asked = self.owned.allocator().dupe(u8, id) catch return;
     }
     pub fn next(self: *TagQueue, items: []const api.Item) ?[]const u8 {
@@ -39,7 +40,7 @@ pub const TagQueue = struct {
         for (items) |item| {
             const p = item.photo;
             if (p.state != .new) continue;
-            if (best == null or (p.taken_at != null and best.?.taken_at == null) or (p.taken_at != null and best.?.taken_at != null and p.taken_at.? < best.?.taken_at.?) or (p.taken_at == best.?.taken_at and std.mem.lessThan(u8, p.id, best.?.id))) best = p;
+            if (best == null or before(p, best.?)) best = p;
         }
         return if (best) |p| p.id else null;
     }
@@ -50,10 +51,8 @@ pub const TagQueue = struct {
         self.post = post;
         for (self.items, 0..) |item, i| self.active = if (std.mem.eql(u8, item.photo.id, id)) i else self.active;
         self.items[self.active].photo.state = .tagging;
-        store.setTags(id, &.{}, .tagging, null, ignored);
         store.thumbnail(id, 1024, self, thumbnail);
     }
-    fn ignored(_: ?*anyopaque, _: api.Error!void) void {}
     fn thumbnail(ctx: ?*anyopaque, result: api.Error!api.Thumbnail) void {
         const self: *TagQueue = @ptrCast(@alignCast(ctx.?));
         const image = result catch return self.answer(error.Io);
@@ -68,8 +67,11 @@ pub const TagQueue = struct {
     pub fn answer(self: *TagQueue, result: anyerror!wire.Response) void {
         const item = &self.items[self.active];
         const response = result catch blk: {
-            const count = self.attempts.getOrPut(self.owned.allocator(), self.owned.allocator().dupe(u8, item.photo.id) catch return) catch return;
-            if (!count.found_existing) count.value_ptr.* = 0;
+            const count = self.attempts.getOrPut(self.owned.allocator(), item.photo.id) catch return;
+            if (!count.found_existing) {
+                count.key_ptr.* = self.owned.allocator().dupe(u8, item.photo.id) catch return;
+                count.value_ptr.* = 0;
+            }
             count.value_ptr.* +|= 1;
             break :blk wire.Response{ .tags = &.{}, .state = if (count.value_ptr.* >= 3) .failed else .new };
         };
@@ -93,4 +95,9 @@ fn copyTags(a: std.mem.Allocator, tags: []const model.Tag) ![]model.Tag {
         }
     };
     return out;
+}
+
+fn before(p: model.Photo, q: model.Photo) bool {
+    if (p.taken_at != q.taken_at) return if (p.taken_at) |at| q.taken_at == null or at < q.taken_at.? else false;
+    return std.mem.lessThan(u8, p.id, q.id);
 }

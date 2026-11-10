@@ -71,27 +71,30 @@ test "oldest dated first then id with undated last; one at a time" {
     const settings: tags.Settings = .{ .auto = true };
     var q: tags.TagQueue = .{ .settings = &settings, .items = f.items };
     defer q.deinit();
+    q.items = try testing.allocator.dupe(api.Item, f.items);
+    defer testing.allocator.free(q.items);
     const first: usize = if (std.mem.lessThan(u8, f.items[2].photo.id, f.items[3].photo.id)) 2 else 3;
     const second: usize = if (first == 2) 3 else 2;
-    try testing.expectEqualStrings(f.items[first].photo.id, q.next(f.items).?);
+    try testing.expectEqualStrings(f.items[first].photo.id, q.next(q.items).?);
     q.step(f.store(), hold);
-    try testing.expectEqual(model.Photo.State.tagging, f.items[first].photo.state);
+    try testing.expectEqual(model.Photo.State.tagging, q.items[first].photo.state);
+    try testing.expectEqual(model.Photo.State.new, f.items[first].photo.state);
     f.store().pump();
     q.step(f.store(), hold);
     try testing.expectEqual(@as(usize, 1), calls);
     q.answer(.{ .state = .review, .tags = &guesses });
     f.store().pump();
-    try testing.expectEqualStrings(f.items[second].photo.id, q.next(f.items).?);
+    try testing.expectEqualStrings(f.items[second].photo.id, q.next(q.items).?);
     tick(&q, &f);
-    try testing.expectEqualStrings(f.items[1].photo.id, q.next(f.items).?);
+    try testing.expectEqualStrings(f.items[1].photo.id, q.next(q.items).?);
     tick(&q, &f);
     const undated_first: usize = if (std.mem.lessThan(u8, f.items[0].photo.id, f.items[4].photo.id)) 0 else 4;
     const undated_second: usize = if (undated_first == 0) 4 else 0;
-    try testing.expectEqualStrings(f.items[undated_first].photo.id, q.next(f.items).?);
+    try testing.expectEqualStrings(f.items[undated_first].photo.id, q.next(q.items).?);
     tick(&q, &f);
-    try testing.expectEqualStrings(f.items[undated_second].photo.id, q.next(f.items).?);
+    try testing.expectEqualStrings(f.items[undated_second].photo.id, q.next(q.items).?);
     tick(&q, &f);
-    try testing.expect(q.next(f.items) == null);
+    try testing.expect(q.next(q.items) == null);
 }
 test "Tag this alone with auto off; review preserves both tags and metadata" {
     var f = try FakeStore.init(testing.allocator);
@@ -131,7 +134,11 @@ test "third failure fails photo and continues with next" {
     for (0..3) |_| tick(&q, &f);
     try testing.expectEqual(model.Photo.State.failed, f.items[0].photo.state);
     try testing.expectEqual(@as(usize, 0), f.items[0].tags.len);
+    q.ask(f.items[0].photo.id);
+    tick(&q, &f);
+    try testing.expectEqual(model.Photo.State.new, f.items[0].photo.state);
     fail = false;
+    tick(&q, &f);
     tick(&q, &f);
     try testing.expectEqual(model.Photo.State.review, f.items[1].photo.state);
 }
@@ -153,9 +160,9 @@ test "place is optional and rounded; ask below off requests review" {
     try testing.expectEqual(@as(f64, -29.87), last.place.?.lon);
 }
 test "native default and override form transport URLs" {
-    const default = try tags.endpoint(testing.allocator, null);
+    const default = try tags.serverUrl(testing.allocator, null, "tag");
     defer testing.allocator.free(default);
-    const override = try tags.endpoint(testing.allocator, "http://localhost:9000/");
+    const override = try tags.serverUrl(testing.allocator, "http://localhost:9000/", "tag");
     defer testing.allocator.free(override);
     const a = try std.Uri.parse(default);
     const b = try std.Uri.parse(override);

@@ -48,5 +48,10 @@ pub fn placeTiles(heights: []const f32, columns: []f32, out: []usize) void {
 
 pub fn placeText(located: ?model.places.Located, saved: []const model.Place) ?[]const u8 {
     const point = located orelse return null;
-    return if (model.places.namedPlace(point, saved)) |place| place.name else "Unnamed place";
+    return if (model.places.namedPlace(point, saved)) |place| place.name else model.places.unnamed;
+}
+
+pub fn tileMeta(a: std.mem.Allocator, item: Item, place: ?[]const u8, day: []const u8) []const u8 {
+    const tail = if (item.photo.state == .review) std.fmt.allocPrint(a, "{d} guesses", .{item.tags.len}) catch unreachable else place orelse "";
+    return std.fmt.allocPrint(a, "{s}{s}{s}", .{ day, if (place != null or item.photo.state == .review) " · " else "", tail }) catch unreachable;
 }
