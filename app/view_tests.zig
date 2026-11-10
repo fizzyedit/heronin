@@ -27,8 +27,18 @@ test "tabs stay visible in library, photo and add without duplicate widget ids" 
     fake.store().list(null, 60, &state, library.State.listed);
     fake.store().places(&state, library.State.placed);
     fake.store().pump();
+    const sign = @import("sign_in.zig");
+    defer sign.account.deinit();
+    sign.account.state = .signed_out;
     try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-sign-in");
     try dvui.testing.expectVisible("heronin-tabs");
+    sign.account.failed = .popup;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("heronin-sign-in-note");
+    sign.account.state = .signed_in;
+    try dvui.testing.settle(frame);
+    try std.testing.expect(dvui.tagGet("heronin-sign-in") == null);
     for (state.items) |item| {
         if (item.tags.len >= 2) {
             state.open = item.photo.id;
@@ -339,8 +349,12 @@ test "Connect fields keep their chip fill height and text ink" {
             return .ok;
         }
     }.frame;
+    const sign = @import("sign_in.zig");
+    defer sign.account.deinit();
+    sign.account.state = .signed_in;
     dvui.debug.widget_id = .undef;
     try dvui.testing.settle(draw);
+    try dvui.testing.expectVisible("heronin-sign-out");
     defer dvui.debug.widget_id = .undef;
     for (0..3) |i| {
         dvui.debug.widget_id = (try dvui.testing.tagGet(library.fmt("heronin-connect-{d}", .{i}))).id;

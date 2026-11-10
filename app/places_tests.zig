@@ -43,4 +43,13 @@ test "places dedupe saved coverage errors distance and owned request lifetime" {
     client.done(&names, error.Io);
     client.step(&names, &photos, &.{}, transport, "");
     try std.testing.expectEqual(@as(usize, 1), requests);
+    const sign = @import("sign_in.zig");
+    defer sign.account.deinit();
+    sign.account.state = .signed_in;
+    client.done(&names, .{ .status = 401, .body = try names.arena.allocator().dupe(u8, "{}") });
+    try std.testing.expectEqual(.signed_out, sign.account.state);
+    try std.testing.expectEqual(@as(usize, 0), names.answers.len);
+    client.step(&names, &photos, &.{}, transport, "");
+    try std.testing.expectEqual(@as(usize, 2), requests);
+    try std.testing.expectEqualStrings("/heronin/api/place?lat=0.000&lon=0.000", pending_url);
 }

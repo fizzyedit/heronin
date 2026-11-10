@@ -47,6 +47,10 @@ pub fn done(ctx: ?*anyopaque, result: core.vfs.Error!core.vfs.http.Response) voi
     self.job = null;
     const response = result catch return;
     defer response.deinit(self.arena.allocator());
+    if (response.status == 401) {
+        self.answers.len -= 1;
+        @import("sign_in.zig").lost();
+    }
     if (response.status != 200) return;
     const parsed = std.json.parseFromSlice(struct { name: ?[]const u8 }, self.arena.allocator(), response.body, .{ .allocate = .alloc_always }) catch return;
     self.answers[self.answers.len - 1].name = parsed.value.name;

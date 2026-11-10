@@ -66,3 +66,16 @@ test "service worker names and implements pruneSuperseded" {
     try std.testing.expect(std.mem.indexOf(u8, source, "await store(cache, request, response)") == null);
     try std.testing.expect(std.mem.indexOf(u8, source, "if (response.ok) await store(cache, event.request, response)") != null);
 }
+
+fn handles(path: []const u8) bool {
+    return std.mem.startsWith(u8, path, "/heronin/") and !std.mem.startsWith(u8, path, "/heronin/api/");
+}
+test "api bypass precedes respondWith" {
+    const start = std.mem.indexOf(u8, source, "if (event.request.method").?;
+    const end = std.mem.indexOfPos(u8, source, start, ") return;").?;
+    try std.testing.expect(std.mem.indexOf(u8, source[start..end], "url.pathname.startsWith(ROOT + 'api/')") != null);
+    try std.testing.expect(!handles("/heronin/api/token"));
+    try std.testing.expect(!handles("/heronin/api/place?lat=0.000&lon=0.000"));
+    try std.testing.expect(handles("/heronin/web.wasm"));
+    try std.testing.expect(handles("/heronin/"));
+}
