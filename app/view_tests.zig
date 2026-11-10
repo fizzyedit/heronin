@@ -70,15 +70,20 @@ fn readableFrame() !dvui.App.Result {
             const title = try dvui.testing.tagGet(library.fmt("tile-title-{d}", .{i}));
             try expectTextFits(library.logic.tileTitle(item), .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), title.rect);
             const place = library.logic.placeText(@import("model").places.placeOf(item.photo, state.photos), state.places);
-            const text = library.fmt("{s}{s}{s}", .{ library.day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) library.fmt("{d} guesses", .{item.tags.len}) else place orelse "" });
+            const text = library.logic.tileMeta(dvui.currentWindow().arena(), item, place, library.day(item.photo));
             const meta = try dvui.testing.tagGet(library.fmt("tile-place-{d}", .{i}));
             try expectTextFits(text, dvui.Font.theme(.body).withSize(theme.size.meta), meta.rect);
         }
-        const favorites = try dvui.testing.tagGet("Favorites");
+        const favorites = try dvui.testing.tagGet("heronin-filter-favorites");
         try std.testing.expect(favorites.rect.x >= 0 and favorites.rect.y >= 0);
         try std.testing.expect(favorites.rect.x + favorites.rect.w <= 390 * dvui.parentGet().screenRectScale(.{}).s);
         try std.testing.expect(favorites.rect.y + favorites.rect.h <= 844 * dvui.parentGet().screenRectScale(.{}).s);
-        try dvui.testing.expectVisible("Favorites");
+        try dvui.testing.expectVisible("heronin-filter-favorites");
+        var content = favorites.rect;
+        const inset = 2 * (6 + 2) * dvui.parentGet().screenRectScale(.{}).s;
+        content.w -= inset;
+        content.h -= inset;
+        try expectTextFits("Favorites", .find(.{ .family = theme.body_face, .size = 14, .weight = .bold }), content);
     }
     return .ok;
 }
@@ -295,4 +300,31 @@ fn placeChecksFrame() !dvui.App.Result {
     try std.testing.expect(named_species > 0);
     try std.testing.expect(!view.matches(groups, &state, "grbher3", "Unnamed place"));
     return .ok;
+}
+
+test "Connect fields keep their chip fill height and text ink" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    const draw = struct {
+        fn frame() !dvui.App.Result {
+            var tab: @import("views/tabs.zig").Tab = .agent;
+            var settings: @import("tag_queue.zig").Settings = .{};
+            @import("views/agent.zig").page(&tab, &settings);
+            if (dvui.debug.widget_id != .undef) {
+                const opts = dvui.debug.target_wd.?.options;
+                try std.testing.expect(opts.background.?);
+                try std.testing.expectEqual(theme.chip, opts.color_fill.?.color);
+                try std.testing.expectEqual(theme.tab_off_ink, opts.color_text.?.color);
+                try std.testing.expectEqual(@as(f32, 44), opts.min_size_content.?.h);
+            }
+            return .ok;
+        }
+    }.frame;
+    dvui.debug.widget_id = .undef;
+    try dvui.testing.settle(draw);
+    defer dvui.debug.widget_id = .undef;
+    for (0..3) |i| {
+        dvui.debug.widget_id = (try dvui.testing.tagGet(library.fmt("heronin-connect-{d}", .{i}))).id;
+        try dvui.testing.settle(draw);
+    }
 }

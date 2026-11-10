@@ -23,7 +23,7 @@ pub fn build(a: std.mem.Allocator, photos: []const model.Photo, tags: []const []
             const f = photos[first.?];
             if (dateOrder(photo.taken_at, f.taken_at) == .lt or (photo.taken_at == f.taken_at and std.mem.order(u8, photo.id, f.id) == .lt)) first = i;
             const b = photos[best];
-            if (ts[0].confidence > tags[best][0].confidence or (ts[0].confidence == tags[best][0].confidence and ((photo.taken_at != null and (b.taken_at == null or photo.taken_at.? > b.taken_at.?)) or (photo.taken_at == b.taken_at and std.mem.order(u8, photo.id, b.id) == .lt)))) best = i;
+            if (better(photo, ts[0], b, tags[best][0])) best = i;
             count += 1;
         }
         if (first) |f| {
@@ -63,4 +63,10 @@ pub fn newThisWeek(entries: []const Entry, now: i64, out: []usize) []usize {
         n += 1;
     }
     return out[0..n];
+}
+
+fn better(photo: model.Photo, tag: model.Tag, b_photo: model.Photo, b_tag: model.Tag) bool {
+    if (tag.confidence != b_tag.confidence) return tag.confidence > b_tag.confidence;
+    if (photo.taken_at != b_photo.taken_at) return if (photo.taken_at) |at| b_photo.taken_at == null or at > b_photo.taken_at.? else false;
+    return std.mem.lessThan(u8, photo.id, b_photo.id);
 }

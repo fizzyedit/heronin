@@ -171,3 +171,26 @@ test "missing config threshold uses the single default" {
     const config = try std.zon.parse.fromSlice(server.Config, .{ .gpa = a, .arena = arena.allocator(), .source = ".{ .port = 8791, .tagger = \"fake\" }", .diagnostics = &diagnostics });
     try equal(logic.default_threshold, config.threshold);
 }
+
+test "HTTP routes by path then method and accepts omitted optional fields" {
+    const get = try handle("GET /api/tag HTTP/1.1\r\nHost: localhost\r\n\r\n", false);
+    defer a.free(get);
+    try expect(std.mem.startsWith(u8, get, "HTTP/1.1 405"));
+    try expect(std.mem.indexOf(u8, get, "allow: POST") != null);
+    for ([_][]const u8{ "/api/nope", "/heronin/api/nope" }) |path| {
+        const response = try post(path, "{}", false);
+        defer a.free(response);
+        try expect(std.mem.startsWith(u8, response, "HTTP/1.1 404"));
+        try expect(std.mem.endsWith(u8, response, "{\"error\":\"not found\"}"));
+    }
+    const response = try post("/api/tag", "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"agent\":\"ours\",\"auto_accept\":true}", false);
+    defer a.free(response);
+    try expect(std.mem.startsWith(u8, response, "HTTP/1.1 200"));
+}
+test "clean keeps the five highest known candidates in descending stable order" {
+    var candidates: [7]wire.Candidate = undefined;
+    for (&candidates, 0..) |*c, i| c.* = .{ .species = model.species.table[i].code, .confidence = @as(f32, @floatFromInt(i)) / 10 };
+    const cleaned = wire.clean(answer(&candidates, "fake"));
+    try equal(@as(usize, 5), cleaned.candidates.len);
+    for (cleaned.candidates, 0..) |c, i| try strings(model.species.table[6 - i].code, c.species);
+}

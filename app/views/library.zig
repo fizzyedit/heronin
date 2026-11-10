@@ -122,7 +122,7 @@ pub fn draw(state: *State) void {
     }
     inline for (.{ "All", "Tagged", "Needs review", "Favorites" }, 0..) |title, i| {
         const chosen = @backingInt(state.filter) == i;
-        if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = title, .margin = .all(6), .font = .find(.{ .family = theme.body_face, .size = 14, .weight = .bold }), .min_size_content = .{ .h = 44 }, .border = .all(2), .corners = .all(22), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) state.filter = @fromBackingInt(@intCast(i));
+        if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = ([_][]const u8{ "heronin-filter-all", "heronin-filter-tagged", "heronin-filter-review", "heronin-filter-favorites" })[i], .margin = .all(6), .font = .find(.{ .family = theme.body_face, .size = 14, .weight = .bold }), .min_size_content = .{ .h = 44 }, .border = .all(2), .corners = .all(22), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) state.filter = @fromBackingInt(@intCast(i));
     }
     filters.deinit();
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
@@ -152,7 +152,7 @@ pub fn draw(state: *State) void {
             image.deinit();
             label(@src(), logic.tileTitle(item), .{ .tag = fmt("tile-title-{d}", .{i}), .font = .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
             const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places);
-            label(@src(), fmt("{s}{s}{s}", .{ day(item.photo), if (place != null or item.photo.state == .review) " · " else "", if (item.photo.state == .review) fmt("{d} guesses", .{item.tags.len}) else place orelse "" }), .{ .tag = fmt("tile-place-{d}", .{i}), .font = dvui.Font.theme(.body).withSize(theme.size.meta), .color_text = .{ .color = theme.tab_off_ink } });
+            label(@src(), logic.tileMeta(dvui.currentWindow().arena(), item, place, day(item.photo)), .{ .tag = fmt("tile-place-{d}", .{i}), .font = dvui.Font.theme(.body).withSize(theme.size.meta), .color_text = .{ .color = theme.tab_off_ink } });
             contents.deinit();
             if (tile.clicked()) state.open = item.photo.id;
             tile.deinit();

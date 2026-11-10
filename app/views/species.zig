@@ -1,3 +1,4 @@
+const std = @import("std");
 const dvui = @import("dvui");
 const core = @import("core");
 const model = @import("model");
@@ -64,7 +65,7 @@ pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void
             row.drawBackground();
             lib.species(e.species.common, theme.size.species);
             var place: ?[]const u8 = null;
-            for (photos[0..n]) |photo| if (@import("std").mem.eql(u8, photo.id, e.first)) {
+            for (photos[0..n]) |photo| if (std.mem.eql(u8, photo.id, e.first)) {
                 place = lib.logic.placeText(model.places.placeOf(photo, state.photos), state.places);
                 break;
             };
@@ -90,5 +91,5 @@ pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void
             shown += 1;
         }
     }
-    if (shown == 0) lib.label(@src(), if (@import("std").mem.trim(u8, query, " ").len > 0) "No species match" else if (state.segment == .seen) "No birds yet. Confirm a photo to start your list." else "You have photographed every species Heronin knows.", .{});
+    if (shown == 0) lib.label(@src(), if (std.mem.trim(u8, query, " ").len > 0) "No species match" else if (state.segment == .seen) "No birds yet. Confirm a photo to start your list." else "You have photographed every species Heronin knows.", .{});
 }

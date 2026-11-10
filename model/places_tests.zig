@@ -35,14 +35,14 @@ test "namedPlace uses radius and selects the nearest covering place" {
     try std.testing.expectEqual(@as(f64, 0), places.distanceM(saved[0], saved[0]));
 }
 
-test "placeLabel uses only photo GPS and names covered points" {
+test "namedPlace covers photo GPS points" {
     var p = photo();
     p.fix = .{ .lat = 0, .lon = 0, .accuracy_m = 5, .at = 10 };
-    try std.testing.expectEqual(null, places.placeLabel(p, &saved));
+    try std.testing.expectEqual(null, if (p.place) |point| places.namedPlace(point, &saved) else null);
     p.place = .{ .lat = 0, .lon = 0 };
-    try std.testing.expectEqualStrings("Wetland", places.placeLabel(p, &saved).?);
-    p.place = .{ .lat = 1, .lon = 0 };
-    try std.testing.expectEqualStrings("Unnamed place", places.placeLabel(p, &saved).?);
+    try std.testing.expectEqualStrings("Wetland", places.namedPlace(p.place.?, &saved).?.name);
+    p.place = .{ .lat = 0.01, .lon = 0 };
+    try std.testing.expectEqual(null, places.namedPlace(p.place.?, &saved));
 }
 
 test "namedPlace includes the radius boundary and skips nearer uncovered places" {

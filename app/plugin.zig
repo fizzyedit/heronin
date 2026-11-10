@@ -17,7 +17,12 @@ var imported: usize = 0;
 var current: tabs.Tab = .library;
 pub fn register(host: *sdk.Host) !void {
     queue = .{ .allocator = host.allocator };
-    agent.url = if (@import("builtin").cpu.arch == .wasm32) "/heronin/api/tag" else try @import("tag_queue.zig").endpoint(tagging.owned.allocator(), @import("core").platform.processEnviron().getAlloc(tagging.owned.allocator(), "HERONIN_TAG_URL") catch null);
+    if (@import("builtin").cpu.arch == .wasm32) {
+        agent.url = "/heronin/api/tag";
+    } else {
+        const env = @import("core").platform.processEnviron().getAlloc(tagging.owned.allocator(), "HERONIN_TAG_URL") catch null;
+        agent.url = try @import("tag_queue.zig").serverUrl(tagging.owned.allocator(), env, "tag");
+    }
     plugin.state = @ptrCast(host);
     try host.registerPlugin(&plugin);
     try host.registerSurface(.{ .id = "heronin.library", .owner = &plugin, .title = "Library", .keywords = &.{"heronin"}, .scrolls_itself = true, .draw = draw });

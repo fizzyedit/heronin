@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) !void {
     const model = b.addModule("model", .{ .root_source_file = b.path("model/model.zig"), .target = target, .optimize = optimize });
     const app = b.createModule(.{ .root_source_file = b.path("app/plugin.zig"), .target = target, .optimize = optimize });
     app.addImport("model", model);
-    const wire = b.addModule("wire", .{ .root_source_file = b.path("server/tagger.zig"), .target = target, .optimize = optimize });
+    const wire = b.createModule(.{ .root_source_file = b.path("server/tagger.zig"), .target = target, .optimize = optimize });
     wire.addImport("model", model);
     app.addImport("wire", wire);
     app.addAnonymousImport("plugin_zon", .{ .root_source_file = b.path("app/plugin.zig.zon") });
