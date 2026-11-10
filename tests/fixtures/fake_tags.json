@@ -1,0 +1,8 @@
+{
+  "00000000000000000000000000000000": [{"species":"grbher3","confidence":0.95},{"species":"greegr","confidence":0.6}],
+  "11111111111111111111111111111111": [{"species":"norcar","confidence":0.9},{"species":"blujay","confidence":0.55}],
+  "22222222222222222222222222222222": [{"species":"amerob","confidence":0.85},{"species":"mallar3","confidence":0.5}],
+  "33333333333333333333333333333333": [{"species":"rewbla","confidence":0.8},{"species":"dowwoo","confidence":0.6}],
+  "44444444444444444444444444444444": [{"species":"bkcchi","confidence":0.75},{"species":"amegfi","confidence":0.65}],
+  "55555555555555555555555555555555": [{"species":"belkin1","confidence":0.95},{"species":"osprey","confidence":0.7}]
+}

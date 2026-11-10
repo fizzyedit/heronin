@@ -1,0 +1,5 @@
+.{
+    .port = 8790,
+    .threshold = 0.85,
+    .tagger = "fake",
+}
