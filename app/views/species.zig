@@ -8,7 +8,7 @@ const lib = @import("library.zig");
 fn day(at: i64, now: i64) []const u8 {
     return lib.logic.dayLabel(dvui.currentWindow().arena().alloc(u8, 40) catch unreachable, at, now, 0);
 }
-pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void {
+pub fn draw(state: *lib.State, now: i64, store: @import("../store.zig").Store, current: *@import("tabs.zig").Tab) void {
     const arena = dvui.currentWindow().arena();
     const photos = arena.alloc(model.Photo, state.items.len) catch unreachable;
     const tags = arena.alloc([]const model.Tag, state.items.len) catch unreachable;
@@ -31,6 +31,7 @@ pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void
         if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = tag, .min_size_content = .{ .h = 44 }, .border = .all(2), .corners = .all(22), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) {
             state.segment = @fromBackingInt(@intCast(i));
             state.at_cluster = null;
+            state.renaming = null;
         }
     }
     segments.deinit();
@@ -49,7 +50,7 @@ pub fn draw(state: *lib.State, now: i64, current: *@import("tabs.zig").Tab) void
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
     defer scroll.deinit();
     if (state.segment == .by_place) {
-        places.draw(state, groups);
+        places.draw(state, store, groups);
         return;
     }
     var missing_buf: [model.species.table.len]model.Species = undefined;
