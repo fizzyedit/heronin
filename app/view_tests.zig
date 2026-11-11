@@ -82,7 +82,7 @@ fn readableFrame() !dvui.App.Result {
         for (state.items, 0..) |item, i| {
             const title = try dvui.testing.tagGet(library.fmt("tile-title-{d}", .{i}));
             try expectTextFits(library.logic.tileTitle(item), .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), title.rect);
-            const place = library.logic.placeText(@import("model").places.placeOf(item.photo, state.photos), state.places, null);
+            const place = library.logic.placeText(dvui.currentWindow().arena(), @import("model").places.placeOf(item.photo, state.photos), state.places, null);
             const text = library.logic.tileMeta(dvui.currentWindow().arena(), item, place, library.day(item.photo));
             const meta = try dvui.testing.tagGet(library.fmt("tile-place-{d}", .{i}));
             try expectTextFits(text, dvui.Font.theme(.body).withSize(theme.size.meta), meta.rect);
@@ -277,8 +277,8 @@ test "By place rows select only their member species and clear on places reload"
         fn frame() !dvui.App.Result {
             const view = @import("views/places.zig");
             for (view.groups(&state).clusters) |c| if (c.place == null) {
-                places.names.answers = try places.names.arena.allocator().alloc(places.Answer, 1);
-                places.names.answers[0] = .{ .lat = c.lat, .lon = c.lon };
+                try places.names.answers.resize(places.names.arena.allocator(), 1);
+                places.names.answers.items[0] = .{ .lat = c.lat, .lon = c.lon };
                 places.done(&places.names, .{ .status = 200, .body = try places.names.arena.allocator().dupe(u8, "{\"name\":\"Sea Mount\"}") });
                 try std.testing.expectEqualStrings("near Sea Mount", view.name(&state, c));
                 break;
@@ -425,9 +425,10 @@ fn renameChecks() !dvui.App.Result {
         rename_row = i;
         rename_member = groups.items[c.members[0]];
         const places = library.places_client;
-        places.names.answers = try places.names.arena.allocator().alloc(places.Answer, 1);
-        places.names.answers[0] = .{ .lat = c.lat, .lon = c.lon };
+        try places.names.answers.resize(places.names.arena.allocator(), 1);
+        places.names.answers.items[0] = .{ .lat = c.lat, .lon = c.lon };
         places.done(&places.names, .{ .status = 200, .body = try places.names.arena.allocator().dupe(u8, "{\"name\":\"Sea Mount\"}") });
+        try std.testing.expectEqualStrings("near Sea Mount", library.photoPlace(state.items[rename_member].photo, state.photos, state.places).?);
         break;
     };
     return .ok;
@@ -456,6 +457,13 @@ test "rename unnamed and saved places without selecting; cancel and near prefill
     fake.store().pump();
     try dvui.testing.settle(frame);
     try std.testing.expectEqualStrings("Sea Mount", state.places[2].name);
+    _ = try dvui.testing.step(struct {
+        fn check() !dvui.App.Result {
+            _ = try frame();
+            try std.testing.expectEqualStrings("Sea Mount", library.photoPlace(state.items[rename_member].photo, state.photos, state.places).?);
+            return .ok;
+        }
+    }.check);
     try tap(tag);
     try tap("heronin-rename-entry");
     try dvui.testing.pressKey(.a, .lcontrol);
@@ -467,7 +475,13 @@ test "rename unnamed and saved places without selecting; cancel and near prefill
     fake.store().pump();
     try dvui.testing.settle(frame);
     try std.testing.expectEqualStrings("Point", state.places[2].name);
-    try std.testing.expectEqualStrings("Point", library.logic.placeText(@import("model").places.placeOf(state.items[rename_member].photo, state.photos), state.places, null).?);
+    _ = try dvui.testing.step(struct {
+        fn check() !dvui.App.Result {
+            _ = try frame();
+            try std.testing.expectEqualStrings("Point", library.photoPlace(state.items[rename_member].photo, state.photos, state.places).?);
+            return .ok;
+        }
+    }.check);
     current = .library;
     state.open = state.items[rename_member].photo.id;
     try dvui.testing.settle(frame);

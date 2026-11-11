@@ -45,11 +45,13 @@ test "shortest column and leftmost ties" {
 }
 
 test "place text uses saved radius and preserves absent location" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     const model = @import("model");
     const saved = [_]model.Place{.{ .id = 1, .name = "Garden", .lat = 0, .lon = 0, .radius_m = 100 }};
-    try expectEqualStrings("Garden", logic.placeText(.{ .lat = 0.0001, .lon = 0, .src = .photo }, &saved, null).?);
-    try expectEqualStrings("Unnamed place", logic.placeText(.{ .lat = 1, .lon = 0, .src = .nearby }, &saved, null).?);
-    try std.testing.expect(logic.placeText(null, &saved, null) == null);
+    try expectEqualStrings("Garden", logic.placeText(arena.allocator(), .{ .lat = 0.0001, .lon = 0, .src = .photo }, &saved, null).?);
+    try expectEqualStrings("Unnamed place", logic.placeText(arena.allocator(), .{ .lat = 1, .lon = 0, .src = .nearby }, &saved, null).?);
+    try std.testing.expect(logic.placeText(arena.allocator(), null, &saved, null) == null);
 }
 
 test "species filter includes only counted photos of the chosen bird" {

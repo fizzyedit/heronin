@@ -6,6 +6,10 @@ const model = @import("model");
 const api = @import("../store.zig");
 const theme = @import("../theme.zig");
 pub const logic = @import("../library_logic.zig");
+pub fn photoPlace(photo: model.Photo, photos: []const model.Photo, saved: []const model.Place) ?[]const u8 {
+    const located = model.places.placeOf(photo, photos);
+    return logic.placeText(dvui.currentWindow().arena(), located, saved, if (located) |point| places_client.near(&places_client.names, point) else null);
+}
 pub const State = struct {
     arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
     items: []api.Item = &.{},
@@ -156,7 +160,7 @@ pub fn draw(state: *State) void {
             badge(item.photo.state);
             image.deinit();
             label(@src(), logic.tileTitle(item), .{ .tag = fmt("tile-title-{d}", .{i}), .font = .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
-            const place = logic.placeText(model.places.placeOf(item.photo, state.photos), state.places, if (model.places.placeOf(item.photo, state.photos)) |point| places_client.near(&places_client.names, point) else null);
+            const place = photoPlace(item.photo, state.photos, state.places);
             label(@src(), logic.tileMeta(dvui.currentWindow().arena(), item, place, day(item.photo)), .{ .tag = fmt("tile-place-{d}", .{i}), .font = dvui.Font.theme(.body).withSize(theme.size.meta), .color_text = .{ .color = theme.tab_off_ink } });
             contents.deinit();
             if (tile.clicked()) state.open = item.photo.id;

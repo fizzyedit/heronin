@@ -264,7 +264,7 @@ test "local place routes validate method and coordinates" {
         .{ .target = "/api/place?lat=60&lon=-30" },
         .{ .target = "/heronin/api/place?lat=60&lon=-30" },
         .{ .target = "/api/place?lat=0&lon=0.09", .body = "{\"name\":null}" },
-        .{ .target = "/api/place?lat=91&lon=0", .status = "400", .body = "{}" },
+        .{ .target = "/api/place?lat=91&lon=0", .status = "400", .body = "{\"error\":\"invalid point\"}" },
         .{ .target = "/api/place", .method = "POST", .status = "405", .body = "{\"error\":\"method not allowed\"}" },
     }) |case| {
         const raw = try std.fmt.allocPrint(arena.allocator(), "{s} {s} HTTP/1.1\r\nHost: localhost\r\n\r\n", .{ case.method, case.target });
