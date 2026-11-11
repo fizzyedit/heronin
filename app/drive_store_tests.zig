@@ -120,6 +120,13 @@ test "Drive places round trip and retry a stale timestamp once" {
     try t.expectEqual(@as(usize, 0), (try places(s)).len);
     const values = [_]model.Place{.{ .id = 1, .name = "Test place", .lat = 0, .lon = 0 }};
     try t.expectEqualStrings("Test place", (try save(s, &values))[0].name);
+    const first_stamp = drive.cache.modified;
+    var consecutive: Sink([]const model.Place) = .{};
+    s.savePlaces(&values, &consecutive, @TypeOf(consecutive).done);
+    for (0..3) |_| s.pump();
+    try t.expect(consecutive.result != null); // No conflict read/retry between write and stat.
+    try t.expectEqualStrings("Test place", (try consecutive.result.?)[0].name);
+    try t.expect(drive.cache.modified.? > first_stamp.?);
     try t.expectEqual(@as(f64, 0), (try places(s))[0].lat);
     try write(&mem, "/Heronin/places.json", "[]");
     try t.expectEqualStrings("Test place", (try save(s, &values))[0].name);
@@ -144,4 +151,19 @@ test "Drive clock crosses UTC year boundary and rejects extreme numbers" {
     try t.expectError(error.Io, import(s, "a"));
     try write(&mem, "/Heronin/places.json", "[{\"id\":1,\"name\":\"Test\",\"lat\":1e300,\"lon\":0}]");
     try t.expectError(error.Io, places(s));
+}
+
+test "Drive pump delivers every queued thumbnail" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const s = drive.store();
+    var sinks = [_]Sink(api.Thumbnail){ .{}, .{}, .{} };
+    for (&sinks) |*sink| s.thumbnail("IMG_0001.jpg", 100, sink, Sink(api.Thumbnail).done);
+    s.pump();
+    for (sinks) |sink| {
+        try t.expect(sink.result != null);
+        try t.expect((try sink.result.?).wash < 6);
+    }
 }
