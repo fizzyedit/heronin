@@ -85,7 +85,7 @@ pub const Claude = struct {
         }
         return .{ .candidates = candidates, .model = message.model };
     }
-    fn refuse(err: anyerror, reason: []const u8) anyerror {
+    pub fn refuse(err: anyerror, reason: []const u8) anyerror {
         std.log.warn("{s}", .{reason});
         return err;
     }

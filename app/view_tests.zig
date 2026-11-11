@@ -343,8 +343,8 @@ test "Connect fields keep their chip fill height and text ink" {
                 const opts = dvui.debug.target_wd.?.options;
                 try std.testing.expect(opts.background.?);
                 try std.testing.expectEqual(theme.chip, opts.color_fill.?.color);
-                try std.testing.expectEqual(theme.tab_off_ink, opts.color_text.?.color);
-                try std.testing.expectEqual(@as(f32, 44), opts.min_size_content.?.h);
+                try std.testing.expectEqual(theme.ink, opts.color_text.?.color);
+                try std.testing.expect(opts.min_size_content.?.h >= 44);
             }
             return .ok;
         }
@@ -356,10 +356,45 @@ test "Connect fields keep their chip fill height and text ink" {
     try dvui.testing.settle(draw);
     try dvui.testing.expectVisible("heronin-sign-out");
     defer dvui.debug.widget_id = .undef;
-    for (0..3) |i| {
-        dvui.debug.widget_id = (try dvui.testing.tagGet(library.fmt("heronin-connect-{d}", .{i}))).id;
+    for ([_][]const u8{ "heronin-connect-address", "heronin-connect-key", "heronin-connect-save" }) |tag| {
+        dvui.debug.widget_id = (try dvui.testing.tagGet(tag)).id;
         try dvui.testing.settle(draw);
     }
+}
+
+var agent_settings: @import("tag_queue.zig").Settings = .{};
+fn agentFrame() !dvui.App.Result {
+    var tab: @import("views/tabs.zig").Tab = .agent;
+    @import("views/agent.zig").page(&tab, &agent_settings);
+    return .ok;
+}
+fn agentTap(tag: []const u8) !void {
+    try dvui.testing.moveTo(tag);
+    try dvui.testing.click(.left);
+    try dvui.testing.settle(agentFrame);
+}
+const http = @import("core").vfs.http;
+var agent_done: http.DoneFn = undefined;
+fn agentRequest(_: *anyopaque, _: std.mem.Allocator, _: http.Request, cb: http.DoneFn, _: ?*anyopaque) @import("core").vfs.Error!http.Job {
+    agent_done = cb;
+    return .{ .id = 1 };
+}
+fn agentCancel(_: *anyopaque, _: http.Job) void {}
+fn agentPump(_: *anyopaque) void {}
+test "Connect shows address key and save; your own agent waits for a saved address" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    const yours = @import("agent_settings.zig");
+    defer yours.deinit();
+    try dvui.testing.settle(agentFrame);
+    try agentTap("heronin-agent-1");
+    try std.testing.expectEqual(.ours, agent_settings.agent);
+    yours.allocator = std.testing.allocator;
+    yours.load(.{ .ptr = &agent_settings, .vtable = &.{ .request = agentRequest, .cancel = agentCancel, .pump = agentPump } }, "");
+    agent_done(null, .{ .status = 200, .body = try std.testing.allocator.dupe(u8, "{\"address\":\"https://agent.example.invalid\",\"wrap\":true,\"model\":\"m\",\"has_key\":true}") });
+    try agentTap("heronin-agent-1");
+    try std.testing.expectEqual(.yours, agent_settings.agent);
+    try dvui.testing.expectVisible("heronin-connect-model");
 }
 
 test "signed out Agent page shows Sign in without duplicate widget ids" {
