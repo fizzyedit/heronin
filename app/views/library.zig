@@ -14,7 +14,7 @@ pub const State = struct {
     arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
     items: []api.Item = &.{},
     places: []model.Place = &.{},
-    washes: [60]u8 = @splat(0),
+    thumbs: [60]Thumb = @splat(.{}),
     requested: bool = false,
     stale: bool = false,
     photos: []model.Photo = &.{},
@@ -27,6 +27,11 @@ pub const State = struct {
     species: ?[]const u8 = null,
     picking: bool = false,
     tag_queue: ?*@import("../tag_queue.zig").TagQueue = null,
+    pub const Thumb = struct {
+        owner: *State = undefined,
+        wash: u8 = 0,
+        image: []const u8 = &.{},
+    };
     pub fn close(self: *State) void {
         self.open = null;
         self.picking = false;
@@ -45,18 +50,22 @@ pub const State = struct {
         self.places = &.{};
         self.photos = &.{};
         self.requested = false;
+        self.thumbs = @splat(.{});
         self.stale = false;
         dvui.refresh(null, @src(), null);
         store.list(null, 60, self, listed);
         store.places(self, placed);
     }
     pub fn thumbnail(ctx: ?*anyopaque, result: api.Error!api.Thumbnail) void {
-        const wash: *u8 = @ptrCast(ctx.?);
-        wash.* = switch (result catch return) {
-            .wash => |w| w % 6,
-            .encoded => 0,
-        };
+        const thumb: *Thumb = @ptrCast(@alignCast(ctx.?));
+        switch (result catch return) {
+            .wash => |w| thumb.wash = w % 6,
+            .encoded => |bytes| {
+                thumb.image = thumb.owner.arena.allocator().dupe(u8, bytes) catch return;
+            },
+        }
     }
+
     pub fn listed(ctx: ?*anyopaque, result: api.Error![]const api.Item) void {
         const self: *State = @ptrCast(@alignCast(ctx.?));
         self.items = copy(api.Item, self.arena.allocator(), result catch return) catch return;
@@ -156,7 +165,14 @@ pub fn draw(state: *State) void {
             tile.processEvents();
             tile.drawBackground();
             var contents = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .horizontal, .padding = .{ .x = 8, .y = 6, .w = 8, .h = 8 } });
-            var image = dvui.box(@src(), .{}, .{ .expand = .horizontal, .min_size_content = .{ .h = heights[i] }, .background = true, .color_fill = .{ .color = theme.washes[state.washes[i]] } });
+            var image = dvui.box(@src(), .{}, .{
+                .tag = fmt("tile-box-{d}", .{i}),
+                .expand = .horizontal,
+                .min_size_content = .{ .h = heights[i] },
+                .background = true,
+                .color_fill = .{ .color = theme.washes[state.thumbs[i].wash] },
+            });
+            thumbnailImage(state.thumbs[i], item.photo.id, fmt("tile-image-{d}", .{i}));
             badge(item.photo.state);
             image.deinit();
             label(@src(), logic.tileTitle(item), .{ .tag = fmt("tile-title-{d}", .{i}), .font = .find(.{ .family = theme.species_face, .size = theme.size.tile_species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
@@ -167,4 +183,17 @@ pub fn draw(state: *State) void {
             tile.deinit();
         }
     }
+}
+
+pub fn thumbnailImage(thumb: State.Thumb, id: []const u8, tag: []const u8) void {
+    if (thumb.image.len == 0) return;
+    _ = dvui.image(@src(), .{
+        .source = .{ .imageFile = .{ .bytes = thumb.image, .name = id } },
+        .shrink = .ratio,
+    }, .{
+        .rect = .{},
+        .expand = .both,
+        .tag = tag,
+        .corners = dvui.parentGet().data().options.corners,
+    });
 }

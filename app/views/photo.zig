@@ -27,7 +27,12 @@ pub fn draw(state: *lib.State, store: api.Store) void {
         const tag = item.tags[0];
         const width = @max(44, dvui.parentGet().data().rect.w);
         const height = width * @as(f32, @floatFromInt(item.photo.h)) / @as(f32, @floatFromInt(item.photo.w));
-        var image = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = width, .h = height }, .background = true, .color_fill = .{ .color = theme.washes[state.washes[index]] } });
+        var image = dvui.box(@src(), .{}, .{
+            .min_size_content = .{ .w = width, .h = height },
+            .background = true,
+            .color_fill = .{ .color = theme.washes[state.thumbs[index].wash] },
+        });
+        lib.thumbnailImage(state.thumbs[index], item.photo.id, "photo-image");
         if (tag.box) |box| {
             var outline = dvui.box(@src(), .{}, .{ .rect = .{ .x = width * box.x, .y = height * box.y, .w = width * box.w, .h = height * box.h }, .border = .all(2), .color_border = .{ .color = theme.red[0] } });
             dvui.labelNoFmt(@src(), "bird found", .{}, .{ .font = dvui.Font.theme(.body).withSize(theme.size.small) });

@@ -95,7 +95,17 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);
     if (!state.requested and state.items.len > 0) {
-        for (state.items, 0..) |item, i| drive_link.link.current(fake.?.store()).thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
+        for (state.items, 0..) |item, i| {
+            if (i >= state.thumbs.len) break;
+            const thumb = &state.thumbs[i];
+            thumb.owner = &state;
+            drive_link.link.current(fake.?.store()).thumbnail(
+                item.photo.id,
+                600,
+                thumb,
+                library.State.thumbnail,
+            );
+        }
         state.requested = true;
         dvui.refresh(null, @src(), null);
     }
