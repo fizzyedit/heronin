@@ -210,3 +210,28 @@ test "callbacks can enqueue answers for the next pump" {
         try eq(n, chain.count);
     }
 }
+
+test "savePlaces owns list and names before deferred delivery" {
+    var fake = try FakeStore.init(std.testing.allocator);
+    defer fake.deinit();
+    var names = [_][3]u8{ "One".*, "Two".*, "Tri".* };
+    var values: [3]model.Place = undefined;
+    for (&values, &names, 0..) |*p, *n, i| p.* = .{ .id = @intCast(i + 1), .name = n, .lat = 0, .lon = 0, .radius_m = 150 };
+    var reply: Reply([]const model.Place) = .{};
+    fake.store().savePlaces(&values, &reply, @TypeOf(reply).done);
+    @memset(std.mem.asBytes(&names), 'x');
+    values[0].id = 99;
+    try expect(reply.result == null);
+    fake.store().pump();
+    const saved = try reply.result.?;
+    try eq(@as(usize, 3), saved.len);
+    for (saved, [_][]const u8{ "One", "Two", "Tri" }, 0..) |p, n, i| {
+        try std.testing.expectEqualStrings(n, p.name);
+        try eq(@as(u16, @intCast(i + 1)), p.id);
+    }
+    reply = .{};
+    fake.store().places(&reply, @TypeOf(reply).done);
+    try expect(reply.result == null);
+    fake.store().pump();
+    try std.testing.expectEqualDeep(saved, try reply.result.?);
+}

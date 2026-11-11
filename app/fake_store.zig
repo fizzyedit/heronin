@@ -71,7 +71,7 @@ pub const FakeStore = struct {
         for (&self.answers) |*arena| arena.deinit();
     }
     pub fn store(self: *FakeStore) api.Store {
-        return .{ .ptr = self, .vtable = &.{ .list = list, .thumbnail = thumbnail, .importFile = importFile, .setTags = setTags, .setFavorite = setFavorite, .places = places, .pump = pump } };
+        return .{ .ptr = self, .vtable = &.{ .list = list, .thumbnail = thumbnail, .importFile = importFile, .setTags = setTags, .setFavorite = setFavorite, .places = places, .savePlaces = savePlaces, .pump = pump } };
     }
     fn cast(ptr: *anyopaque) *FakeStore {
         return @ptrCast(@alignCast(ptr));
@@ -145,6 +145,14 @@ pub const FakeStore = struct {
     fn places(ptr: *anyopaque, ctx: ?*anyopaque, done: api.Done([]const model.Place)) void {
         const self = cast(ptr);
         self.answer([]const model.Place, ctx, done, self.saved);
+    }
+    fn savePlaces(ptr: *anyopaque, values: []const model.Place, ctx: ?*anyopaque, done: api.Done([]const model.Place)) void {
+        const self = cast(ptr);
+        const a = self.arena.allocator();
+        const saved = a.dupe(model.Place, values) catch return self.answer([]const model.Place, ctx, done, error.OutOfMemory);
+        for (saved) |*p| p.name = a.dupe(u8, p.name) catch return self.answer([]const model.Place, ctx, done, error.OutOfMemory);
+        self.saved = saved;
+        self.answer([]const model.Place, ctx, done, saved);
     }
     /// Not reentrant; callbacks may queue answers for the next pump.
     fn pump(ptr: *anyopaque) void {

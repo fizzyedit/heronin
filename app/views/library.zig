@@ -16,6 +16,8 @@ pub const State = struct {
     photos: []model.Photo = &.{},
     segment: enum { seen, not_yet, by_place } = .seen,
     at_cluster: ?usize = null,
+    renaming: ?usize = null,
+    rename_failed: bool = false,
     filter: logic.Filter = .all,
     open: ?[]const u8 = null,
     species: ?[]const u8 = null,
@@ -34,6 +36,7 @@ pub const State = struct {
         std.debug.assert(self.open == null);
         _ = self.arena.reset(.retain_capacity);
         self.at_cluster = null;
+        self.renaming = null;
         self.items = &.{};
         self.places = &.{};
         self.photos = &.{};
@@ -60,6 +63,7 @@ pub const State = struct {
     pub fn placed(ctx: ?*anyopaque, result: api.Error![]const model.Place) void {
         const self: *State = @ptrCast(@alignCast(ctx.?));
         self.at_cluster = null;
+        self.renaming = null;
         self.places = copy(model.Place, self.arena.allocator(), result catch return) catch return;
     }
 };

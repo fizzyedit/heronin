@@ -24,6 +24,7 @@ pub const Store = struct {
         setTags: *const fn (ptr: *anyopaque, id: []const u8, tags: []const model.Tag, state: model.Photo.State, ctx: ?*anyopaque, done: Done(void)) void,
         setFavorite: *const fn (ptr: *anyopaque, id: []const u8, on: bool, ctx: ?*anyopaque, done: Done(void)) void,
         places: *const fn (ptr: *anyopaque, ctx: ?*anyopaque, done: Done([]const model.Place)) void,
+        savePlaces: *const fn (ptr: *anyopaque, places: []const model.Place, ctx: ?*anyopaque, done: Done([]const model.Place)) void,
         pump: *const fn (ptr: *anyopaque) void,
     };
     pub fn list(self: Store, after: ?[]const u8, limit: u32, ctx: ?*anyopaque, done: Done([]const Item)) void {
@@ -43,6 +44,9 @@ pub const Store = struct {
     }
     pub fn places(self: Store, ctx: ?*anyopaque, done: Done([]const model.Place)) void {
         self.vtable.places(self.ptr, ctx, done);
+    }
+    pub fn savePlaces(self: Store, values: []const model.Place, ctx: ?*anyopaque, done: Done([]const model.Place)) void {
+        self.vtable.savePlaces(self.ptr, values, ctx, done);
     }
     pub fn pump(self: Store) void {
         self.vtable.pump(self.ptr);

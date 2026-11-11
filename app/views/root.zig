@@ -19,7 +19,7 @@ pub fn draw(current: *tabs.Tab, state: *library.State, queue: *imports.Queue, st
     @import("../sign_in.zig").banner();
     switch (current.*) {
         .library => if (state.open != null) photo.draw(state, store) else library.draw(state),
-        .species => species.draw(state, library.now(), current),
+        .species => species.draw(state, library.now(), store, current),
         .add => add.draw(queue, state, store, current),
         else => dvui.labelNoFmt(@src(), current.title(), .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } }),
     }

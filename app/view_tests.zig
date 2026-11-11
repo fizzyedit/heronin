@@ -133,7 +133,7 @@ test "library text wraps and Favorites stays inside a phone window" {
 
 var species_now: i64 = 0;
 fn speciesFrame() !dvui.App.Result {
-    @import("views/species.zig").draw(&state, species_now, &current);
+    @import("views/species.zig").draw(&state, species_now, fake.store(), &current);
     return .ok;
 }
 test "life list banner uses the supplied time" {
@@ -378,4 +378,80 @@ test "signed out Agent page shows Sign in without duplicate widget ids" {
     }.frame);
     try dvui.testing.expectVisible("heronin-sign-in");
     try dvui.testing.expectVisible("heronin-tabs");
+}
+
+var rename_row: usize = 0;
+var rename_member: usize = 0;
+fn renameChecks() !dvui.App.Result {
+    _ = try frame();
+    const view = @import("views/places.zig");
+    const groups = view.groups(&state);
+    for (groups.clusters, 0..) |c, i| if (c.place == null) {
+        rename_row = i;
+        rename_member = groups.items[c.members[0]];
+        const places = library.places_client;
+        places.names.answers = try places.names.arena.allocator().alloc(places.Answer, 1);
+        places.names.answers[0] = .{ .lat = c.lat, .lon = c.lon };
+        places.done(&places.names, .{ .status = 200, .body = try places.names.arena.allocator().dupe(u8, "{\"name\":\"Sea Mount\"}") });
+        break;
+    };
+    return .ok;
+}
+test "rename unnamed and saved places without selecting; cancel and near prefill" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    defer library.places_client.names.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    current = .species;
+    state.segment = .by_place;
+    _ = try dvui.testing.step(renameChecks);
+    try dvui.testing.settle(frame);
+    var tag_buf: [50]u8 = undefined;
+    const tag = try std.fmt.bufPrint(&tag_buf, "heronin-rename-{d}", .{rename_row});
+    try tap(tag);
+    try tap("heronin-rename-save");
+    fake.store().pump();
+    try dvui.testing.settle(frame);
+    try std.testing.expectEqualStrings("Sea Mount", state.places[2].name);
+    try tap(tag);
+    try tap("heronin-rename-entry");
+    try dvui.testing.pressKey(.a, .lcontrol);
+    try dvui.testing.writeText("Point");
+    try dvui.testing.settle(frame);
+    try tap("heronin-rename-save");
+    try std.testing.expectEqual(null, state.at_cluster);
+    try std.testing.expectEqual(.by_place, state.segment);
+    fake.store().pump();
+    try dvui.testing.settle(frame);
+    try std.testing.expectEqualStrings("Point", state.places[2].name);
+    try std.testing.expectEqualStrings("Point", library.logic.placeText(@import("model").places.placeOf(state.items[rename_member].photo, state.photos), state.places, null).?);
+    current = .library;
+    state.open = state.items[rename_member].photo.id;
+    try dvui.testing.settle(frame);
+    state.close();
+    current = .species;
+    try dvui.testing.settle(frame);
+    try tap("heronin-rename-0");
+    try tap("heronin-rename-entry");
+    try dvui.testing.pressKey(.a, .lcontrol);
+    try dvui.testing.writeText("Garden");
+    try dvui.testing.settle(frame);
+    try tap("heronin-rename-save");
+    fake.store().pump();
+    try dvui.testing.settle(frame);
+    try std.testing.expectEqual(@as(usize, 3), state.places.len);
+    try std.testing.expectEqual(@as(u16, 1), state.places[0].id);
+    try std.testing.expectEqualStrings("Garden", state.places[0].name);
+    try tap("heronin-rename-0");
+    try tap("heronin-rename-cancel");
+    fake.store().pump();
+    try std.testing.expectEqualStrings("Garden", fake.saved[0].name);
 }
