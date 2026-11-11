@@ -82,9 +82,22 @@ pub fn build(b: *std.Build) !void {
         headless.addImport("dvui", testing_dvui);
         testing_core.addImport(name, headless);
     }
+    const native_sdk = fizzy.framework(fizzy_dep, .native).sdk;
+    const testing_sdk = b.createModule(.{ .root_source_file = native_sdk.root_source_file, .target = target, .optimize = optimize });
+    var sdk_imports = native_sdk.import_table.iterator();
+    while (sdk_imports.next()) |entry| testing_sdk.addImport(entry.key_ptr.*, entry.value_ptr.*);
+    testing_sdk.addImport("dvui", testing_dvui);
+    testing_sdk.addImport("core", testing_core);
+    testing_sdk.addImport("replay", testing_core.import_table.get("replay").?);
+    const proxy = native_sdk.import_table.get("proxy_bridge").?;
+    const testing_proxy = b.createModule(.{ .root_source_file = proxy.root_source_file, .target = target, .optimize = optimize });
+    testing_proxy.addImport("dvui", testing_dvui);
+    testing_sdk.addImport("proxy_bridge", testing_proxy);
+    app_tests.root_module.addImport("fizzy_sdk", testing_sdk);
     const view_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("app/view_tests.zig"), .target = target, .optimize = optimize }) });
     app_tests.root_module.addImport("dvui", testing_dvui);
     app_tests.root_module.addImport("core", testing_core);
+    view_tests.root_module.addImport("fizzy_sdk", testing_sdk);
     view_tests.root_module.addImport("model", model);
     view_tests.root_module.addImport("wire", wire);
     view_tests.root_module.addImport("dvui", testing_dvui);

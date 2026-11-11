@@ -1,3 +1,4 @@
+const drive_link = @import("drive_link.zig");
 const std = @import("std");
 const core = @import("core");
 const dvui = @import("dvui");
@@ -37,6 +38,7 @@ fn answered(_: ?*anyopaque, result: core.vfs.Error!core.vfs.http.Response) void 
     defer response.deinit(account.arena.child_allocator);
     if (account.state != .checking) {
         if (response.status == 204) {
+            if (drive_link.link.host) |host| drive_link.link.give(host, "", 0);
             account.state, account.email = .{ .signed_out, null };
         } else failure();
         return;
@@ -44,8 +46,9 @@ fn answered(_: ?*anyopaque, result: core.vfs.Error!core.vfs.http.Response) void 
     account.state = if (response.status == 200) .checking else if (response.status == 502) .signed_in else if (response.status == 401) .signed_out else .off;
     if (response.status == 401) account.email = null;
     if (response.status != 200) return;
-    const parsed = std.json.parseFromSlice(struct { email: []const u8 }, account.arena.child_allocator, response.body, .{ .ignore_unknown_fields = true }) catch return failure();
+    const parsed = std.json.parseFromSlice(struct { email: []const u8, access_token: []const u8, expires_in: u32 }, account.arena.child_allocator, response.body, .{ .ignore_unknown_fields = true }) catch return failure();
     defer parsed.deinit();
+    if (drive_link.link.host) |host| drive_link.link.give(host, parsed.value.access_token, parsed.value.expires_in);
     _ = account.arena.reset(.retain_capacity);
     account.email = account.arena.allocator().dupe(u8, parsed.value.email) catch null;
     account.state = .signed_in;
@@ -69,6 +72,7 @@ pub fn signOut() void {
     send(.POST, "logout");
 }
 pub fn lost() void {
+    if (drive_link.link.host) |host| drive_link.link.give(host, "", 0);
     if (account.state == .signed_in) account.state = .signed_out;
 }
 pub fn button(id: usize) void {
@@ -83,4 +87,10 @@ pub fn banner() void {
 }
 fn failure() void {
     account.state, account.failed = if (account.state == .checking) .{ .off, .none } else .{ .signed_in, .sign_out };
+}
+pub fn step() void {
+    if (account.job != null or account.state != .signed_in or (!drive_link.link.token_due and !drive_link.link.retry)) return;
+    drive_link.link.token_due = false;
+    drive_link.link.retry = false;
+    check(account.transport.?, account.base);
 }
