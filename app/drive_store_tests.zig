@@ -15,6 +15,9 @@ fn Sink(comptime T: type) type {
         }
     };
 }
+fn clock() i64 {
+    return 1750000000;
+}
 const List = Sink([]const api.Item);
 fn seed(mem: *vfs.Mem) !void {
     try mem.putDir("/Heronin");
@@ -29,7 +32,7 @@ test "folder listing takes two pumps, pages copied cursors and caches without Fs
     var mem = try vfs.Mem.init(t.allocator);
     defer mem.deinit();
     try seed(&mem);
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     const store = drive.store();
     var list: List = .{};
@@ -73,7 +76,7 @@ test "writeFile time sorts ahead of missing time on the second pump" {
     try seed(&mem);
     _ = try mem.fs().writeFile("/Heronin/IMG_0002.jpg", "abcd", .{}, written, null);
     mem.fs().pump();
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     var list: List = .{};
     const store = drive.store();
@@ -88,7 +91,7 @@ test "writeFile time sorts ahead of missing time on the second pump" {
 test "missing root answers empty on first pump" {
     var mem = try vfs.Mem.init(t.allocator);
     defer mem.deinit();
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     var list: List = .{};
     drive.store().list(null, 10, &list, List.done);
@@ -101,23 +104,17 @@ test "thumbnail and all refusals bypass a listing on first pump" {
     var mem = try vfs.Mem.init(t.allocator);
     defer mem.deinit();
     try seed(&mem);
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     const store = drive.store();
     var list: List = .{};
     var thumb: Sink(api.Thumbnail) = .{};
     var tags: Sink(void) = .{};
     var favorite: Sink(void) = .{};
-    var imported: Sink(api.Imported) = .{};
-    var places: Sink([]const model.Place) = .{};
-    var saved: Sink([]const model.Place) = .{};
     store.list(null, 10, &list, List.done);
     store.thumbnail("IMG_0002.jpg", std.math.maxInt(u32), &thumb, @TypeOf(thumb).done);
     store.setTags("IMG_0002.jpg", &.{}, .new, &tags, @TypeOf(tags).done);
     store.setFavorite("IMG_0002.jpg", true, &favorite, @TypeOf(favorite).done);
-    store.importFile("IMG_0004.jpg", "", &imported, @TypeOf(imported).done);
-    store.places(&places, @TypeOf(places).done);
-    store.savePlaces(&.{}, &saved, @TypeOf(saved).done);
     try t.expectEqual(0, thumb.calls);
     try t.expectEqual(0, tags.calls);
     store.pump();
@@ -127,14 +124,8 @@ test "thumbnail and all refusals bypass a listing on first pump" {
     try t.expectEqual(wash, (try thumb.result).wash);
     try t.expectEqual(1, tags.calls);
     try t.expectEqual(1, favorite.calls);
-    try t.expectEqual(1, imported.calls);
-    try t.expectEqual(1, places.calls);
-    try t.expectEqual(1, saved.calls);
     try t.expectError(error.Unsupported, tags.result);
     try t.expectError(error.Unsupported, favorite.result);
-    try t.expectError(error.Unsupported, imported.result);
-    try t.expectError(error.Unsupported, places.result);
-    try t.expectError(error.Unsupported, saved.result);
     store.pump();
     try t.expectEqual(1, list.calls);
 }
@@ -142,7 +133,7 @@ test "Fs errors answer Io and the next list retries" {
     var mem = try vfs.Mem.init(t.allocator);
     defer mem.deinit();
     try mem.put("/Heronin", "not a directory");
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     const store = drive.store();
     var list: List = .{};
@@ -161,7 +152,7 @@ test "Fs errors answer Io and the next list retries" {
 test "answers queued during delivery wait until next pump" {
     var mem = try vfs.Mem.init(t.allocator);
     defer mem.deinit();
-    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
     defer drive.deinit();
     const Callback = struct {
         var calls: usize = 0;
@@ -178,4 +169,135 @@ test "answers queued during delivery wait until next pump" {
     try t.expectEqual(0, Callback.calls);
     drive.store().pump();
     try t.expectEqual(1, Callback.calls);
+}
+test "imports copy inputs, create year, deduplicate and refresh listing" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const store = drive.store();
+    var imported: Sink(api.Imported) = .{};
+    var name = "IMG_0001.jpg".*;
+    var bytes = "bytes".*;
+    store.importFile(&name, &bytes, &imported, @TypeOf(imported).done);
+    @memset(&name, 'x');
+    @memset(&bytes, 'x');
+    for (0..4) |_| store.pump();
+    try t.expectEqual(1, imported.calls);
+    try t.expect((try imported.result).new);
+    try t.expectEqualStrings("2025/IMG_0001.jpg", (try imported.result).photo.id);
+    try t.expectEqual(5, (try imported.result).photo.bytes);
+    _ = try mem.fs().writeFile("/Heronin/2025/IMG_0001.jpg", "bytes", .{}, written, null);
+    mem.fs().pump();
+    store.importFile("IMG_0001.jpg", "bytes", &imported, @TypeOf(imported).done);
+    for (0..3) |_| store.pump();
+    try t.expectEqual(2, imported.calls);
+    try t.expect(!(try imported.result).new);
+    try t.expectEqual(@as(?i64, 0), (try imported.result).photo.taken_at);
+    var list: List = .{};
+    store.list(null, 10, &list, List.done);
+    for (0..2) |_| store.pump();
+    try t.expectEqual(1, (try list.result).len);
+    store.importFile("IMG_0001.jpg", "other bytes", &imported, @TypeOf(imported).done);
+    for (0..5) |_| store.pump();
+    try t.expectEqual(3, imported.calls);
+    try t.expect((try imported.result).new);
+    try t.expectEqualStrings("2025/IMG_0001 (2).jpg", (try imported.result).photo.id);
+    try t.expectEqual(11, (try imported.result).photo.bytes);
+    try t.expectEqual(@as(?i64, null), (try imported.result).photo.taken_at);
+    store.list(null, 10, &list, List.done);
+    for (0..2) |_| store.pump();
+    try t.expectEqual(2, (try list.result).len);
+}
+test "places round trip, fresh stat and one conflict retry have exact pump counts" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try mem.putDir("/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const store = drive.store();
+    var places: Sink([]const model.Place) = .{};
+    store.places(&places, @TypeOf(places).done);
+    store.pump();
+    try t.expectEqual(0, (try places.result).len);
+    try t.expectEqual(@as(?i64, null), drive.places_ms);
+    var name = "Test place".*;
+    var values = [_]model.Place{.{ .id = 1, .name = &name, .lat = 0, .lon = 0 }};
+    store.savePlaces(&values, &places, @TypeOf(places).done);
+    @memset(&name, 'x');
+    values[0].lat = 60;
+    store.pump();
+    try t.expectEqual(1, places.calls);
+    store.pump();
+    try t.expectEqual(2, places.calls);
+    try t.expectEqualStrings("Test place", (try places.result)[0].name);
+    try t.expectEqual(0, (try places.result)[0].lat);
+    const saved = [_]model.Place{.{ .id = 2, .name = "Another place", .lat = 60, .lon = -30 }};
+    store.savePlaces(&saved, &places, @TypeOf(places).done);
+    store.pump();
+    try t.expectEqual(2, places.calls);
+    store.pump();
+    try t.expectEqual(3, places.calls);
+    store.places(&places, @TypeOf(places).done);
+    store.pump();
+    try t.expectEqual(4, places.calls);
+    try t.expectEqualStrings(saved[0].name, (try places.result)[0].name);
+    _ = try mem.fs().writeFile("/Heronin/places.json", "[]", .{}, written, null);
+    mem.fs().pump();
+    store.savePlaces(&saved, &places, @TypeOf(places).done);
+    for (0..3) |_| {
+        store.pump();
+        try t.expectEqual(4, places.calls);
+    }
+    store.pump();
+    try t.expectEqual(5, places.calls);
+    store.places(&places, @TypeOf(places).done);
+    store.pump();
+    try t.expectEqual(6, places.calls);
+    try t.expectEqualStrings(saved[0].name, (try places.result)[0].name);
+}
+test "unrepresentable clock years answer Io without integer traps" {
+    const Clocks = struct {
+        fn negative() i64 {
+            return std.math.minInt(i64);
+        }
+        fn huge() i64 {
+            return std.math.maxInt(i64);
+        }
+    };
+    inline for (.{ Clocks.negative, Clocks.huge }) |now| {
+        var mem = try vfs.Mem.init(t.allocator);
+        defer mem.deinit();
+        var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", now);
+        defer drive.deinit();
+        var imported: Sink(api.Imported) = .{};
+        drive.store().importFile("IMG_0001.jpg", "bytes", &imported, @TypeOf(imported).done);
+        drive.store().pump();
+        try t.expectEqual(1, imported.calls);
+        try t.expectError(error.Io, imported.result);
+    }
+}
+test "import during listing safely refreshes lists queued from its callback" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try seed(&mem);
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const Callback = struct {
+        store: api.Store,
+        list: List = .{},
+        fn done(ctx: ?*anyopaque, _: api.Error!api.Imported) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            self.store.list(null, 10, &self.list, List.done);
+        }
+    };
+    var callback: Callback = .{ .store = drive.store() };
+    callback.store.importFile("IMG_0004.jpg", "bytes", &callback, Callback.done);
+    for (0..2) |_| callback.store.pump();
+    callback.store.list(null, 10, &callback.list, List.done);
+    for (0..2) |_| callback.store.pump();
+    try t.expectEqual(0, callback.list.calls);
+    for (0..2) |_| callback.store.pump();
+    try t.expectEqual(2, callback.list.calls);
+    try t.expectEqualStrings("2025/IMG_0004.jpg", (try callback.list.result)[1].photo.id);
 }
