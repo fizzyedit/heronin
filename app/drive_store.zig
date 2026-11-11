@@ -25,6 +25,7 @@ pub const DriveStore = struct {
         live: u1 = 0,
         items: []api.Item = &.{},
         pending: std.ArrayList(api.Item) = .empty,
+        jobs: std.ArrayList(vfs.Job) = .empty,
         failed: bool = false,
         stale: bool = false,
     },
@@ -42,10 +43,11 @@ pub const DriveStore = struct {
         number: u64 = 1,
         failed: bool = false,
         retired: bool = false,
+        job: ?vfs.Job = null,
         fn start(o: *Import) !void {
             const a = o.arena.allocator();
             switch (o.state) {
-                .make_root => _ = try o.s.fs.mkdir(o.s.root, wrote, o),
+                .make_root => o.job = try o.s.fs.mkdir(o.s.root, wrote, o),
                 .make_year => {
                     const secs = std.math.cast(u64, o.s.clock()) orelse return error.Io;
                     // Bound the conversion's year increment, which uses u16 internally.
@@ -53,7 +55,7 @@ pub const DriveStore = struct {
                     const year = (std.time.epoch.EpochSeconds{ .secs = secs })
                         .getEpochDay().calculateYearDay().year;
                     o.dir = try std.fmt.allocPrint(a, "{d}", .{year});
-                    _ = try o.s.fs.mkdir(try vfs.path.join(a, o.s.root, o.dir), wrote, o);
+                    o.job = try o.s.fs.mkdir(try vfs.path.join(a, o.s.root, o.dir), wrote, o);
                 },
                 .probe => {
                     const name = if (o.number == 1) o.name else try std.fmt.allocPrint(
@@ -63,10 +65,15 @@ pub const DriveStore = struct {
                     );
                     o.id = try vfs.path.join(a, o.dir, name);
                     o.path = try vfs.path.join(a, o.s.root, o.id);
-                    _ = try o.s.fs.stat(o.path, probed, o);
+                    o.job = try o.s.fs.stat(o.path, probed, o);
                 },
-                .write => _ = try o.s.fs.writeFile(o.path, o.bytes, .{}, wrote, o),
+                .write => o.job = try o.s.fs.writeFile(o.path, o.bytes, .{}, wrote, o),
             }
+        }
+        fn end(o: *Import, result: api.Error!api.Imported) void {
+            o.retired = true;
+            o.s.importing = null;
+            o.done(o.ctx, result);
         }
         fn answer(o: *Import, stat: vfs.Stat, new: bool) void {
             if (o.s.listing.state == .reading) {
@@ -86,6 +93,7 @@ pub const DriveStore = struct {
         }
         fn wrote(ctx: C, result: vfs.Result(void)) void {
             const o: *Import = @ptrCast(@alignCast(ctx.?));
+            o.job = null;
             result.get() catch |err| {
                 if (o.state == .write or err != error.Exists) return end(o, error.Io);
             };
@@ -99,6 +107,7 @@ pub const DriveStore = struct {
         }
         fn probed(ctx: C, result: vfs.Result(vfs.Stat)) void {
             const o: *Import = @ptrCast(@alignCast(ctx.?));
+            o.job = null;
             if (result.get()) |stat| {
                 if (stat.kind == .file and stat.size == o.bytes.len and o.number == 1)
                     return o.answer(stat, false);
@@ -111,6 +120,7 @@ pub const DriveStore = struct {
         }
     };
     /// A conflicting save rereads once, then retries the caller's values: last writer wins.
+    /// A file deleted meanwhile is written again.
     const PlacesOp = struct {
         s: *DriveStore,
         arena: std.heap.ArenaAllocator,
@@ -122,25 +132,29 @@ pub const DriveStore = struct {
         values: Places = &.{},
         failed: bool = false,
         retired: bool = false,
+        job: ?vfs.Job = null,
         fn start(o: *PlacesOp) !void {
             switch (o.state) {
-                .read, .reread => _ = try o.s.fs.readFile(o.arena.allocator(), o.path, read, o),
-                .write, .rewrite => _ = try o.s.fs.writeFile(
+                .read, .reread => o.job = try o.s.fs.readFile(o.arena.allocator(), o.path, read, o),
+                .write, .rewrite => o.job = try o.s.fs.writeFile(
                     o.path,
                     o.bytes,
                     .{ .if_unmodified_ms = o.s.places_ms },
                     wrote,
                     o,
                 ),
-                .stat => _ = try o.s.fs.stat(o.path, stated, o),
+                .stat => o.job = try o.s.fs.stat(o.path, stated, o),
             }
         }
         fn read(ctx: C, result: vfs.Result(vfs.Read)) void {
             const o: *PlacesOp = @ptrCast(@alignCast(ctx.?));
+            o.job = null;
             const value = result.get() catch |err| {
-                if (err != error.NotFound or o.state != .read) return end(o, error.Io);
+                if (err != error.NotFound) return end(o, error.Io);
                 o.s.places_ms = null;
-                return end(o, &.{});
+                if (o.state == .read) return end(o, &.{});
+                o.state = .rewrite;
+                return o.start() catch end(o, error.Io);
             };
             o.s.places_ms = value.modified_ms;
             if (o.state == .read) return end(o, std.json.parseFromSliceLeaky(
@@ -154,24 +168,25 @@ pub const DriveStore = struct {
         }
         fn wrote(ctx: C, result: vfs.Result(void)) void {
             const o: *PlacesOp = @ptrCast(@alignCast(ctx.?));
+            o.job = null;
             o.state = if (result.get()) |_| .stat else |err| retry: {
                 if (err != error.Conflict or o.state != .write) return end(o, error.Io);
                 break :retry .reread;
             };
             o.start() catch end(o, error.Io);
         }
+        fn end(o: *PlacesOp, result: api.Error!Places) void {
+            o.retired = true;
+            o.done(o.ctx, result);
+        }
         fn stated(ctx: C, result: vfs.Result(vfs.Stat)) void {
             const o: *PlacesOp = @ptrCast(@alignCast(ctx.?));
+            o.job = null;
             const stat = result.get() catch return end(o, error.Io);
             o.s.places_ms = stat.modified_ms;
             end(o, o.values);
         }
     };
-    fn end(o: anytype, result: api.Error!if (@TypeOf(o) == *Import) api.Imported else Places) void {
-        o.retired = true;
-        if (@TypeOf(o) == *Import) o.s.importing = null;
-        o.done(o.ctx, result);
-    }
     const Folder = struct { self: *DriveStore, name: []const u8 };
     const Answer = struct {
         ctx: C,
@@ -186,8 +201,12 @@ pub const DriveStore = struct {
         const copy = try gpa.dupe(u8, root);
         return .{ .gpa = gpa, .fs = fs, .root = copy, .listing = l, .clock = clock };
     }
+    /// Cancels pending jobs so no callback runs after deinit.
     pub fn deinit(self: *DriveStore) void {
         self.reap(true);
+        if (self.listing.state == .reading) {
+            for (self.listing.jobs.items) |job| self.fs.cancel(job);
+        }
         for (self.answers.items) |answer| {
             if (answer.reply == .list) self.gpa.free(answer.reply.list.after orelse continue);
         }
@@ -229,6 +248,7 @@ pub const DriveStore = struct {
         self.listing.failed = false;
         _ = self.listing.arenas[self.listing.live ^ 1].reset(.retain_capacity);
         self.listing.pending = .empty;
+        self.listing.jobs = .empty;
         self.startFolder("") catch {
             self.listing.failed = true;
             self.listing.state = .ready;
@@ -259,7 +279,8 @@ pub const DriveStore = struct {
         folder.* = .{ .self = s, .name = name };
         const path = if (name.len == 0) s.root else try vfs.path.join(s.arena(), s.root, name);
         const left = std.math.add(u32, s.listing.left, 1) catch return error.Io;
-        _ = try s.fs.listDir(s.arena(), path, listed, folder);
+        try s.listing.jobs.ensureUnusedCapacity(s.arena(), 1);
+        s.listing.jobs.appendAssumeCapacity(try s.fs.listDir(s.arena(), path, listed, folder));
         s.listing.left = left;
     }
     fn collect(s: *DriveStore, d: []const u8, entries: []vfs.Entry) !void {
@@ -348,11 +369,12 @@ pub const DriveStore = struct {
             while (i < ops.items.len) {
                 const o = ops.items[i];
                 if (all or o.retired) {
+                    if (!o.retired) if (o.job) |job| s.fs.cancel(job);
                     o.arena.deinit();
                     s.gpa.destroy(o);
                     _ = ops.swapRemove(i);
                 } else {
-                    if (o.failed) end(o, error.Io);
+                    if (o.failed) o.end(error.Io);
                     i += 1;
                 }
             }
