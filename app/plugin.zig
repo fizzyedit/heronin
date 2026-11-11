@@ -33,6 +33,7 @@ pub fn register(host: *sdk.Host) !void {
 fn deinit(_: *anyopaque) void {
     library.places_client.names.deinit();
     sign_in.account.deinit();
+    if (fake != null) @import("agent_settings.zig").deinit();
     if (fake != null) agent.deinit();
     tagging.deinit();
     if (fake) |*f| f.deinit();
@@ -49,6 +50,7 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (fake == null) {
         agent.init();
         if (@import("builtin").cpu.arch == .wasm32) sign_in.check(agent.transport, places_base orelse "");
+        @import("agent_settings.zig").load(agent.transport, places_base);
         state.tag_queue = &tagging;
         fake = try @import("fake_store.zig").FakeStore.init(@import("std").heap.page_allocator);
         fake.?.store().list(null, 60, &state, library.State.listed);

@@ -5,6 +5,7 @@ const core = @import("core");
 const theme = @import("../theme.zig");
 const lib = @import("library.zig");
 const tags = @import("../tag_queue.zig");
+const yours = @import("../agent_settings.zig");
 // Keep this displayed value aligned with server/decide.zig default_threshold.
 pub const auto_accept_shown = 85;
 pub fn draw(settings: *tags.Settings) void {
@@ -19,19 +20,27 @@ pub fn draw(settings: *tags.Settings) void {
     lib.label(@src(), "Tagging agent", .{ .font = dvui.Font.theme(.title) });
     lib.label(@src(), "Who looks at your photos and names the bird.", .{});
     inline for (.{ "Our agent", "Your own agent", "Both, compare" }, .{ "Default", "Connect", "Extra check" }, 0..) |name, hint, i| {
-        const chosen = @backingInt(settings.agent) == i;
-        const opts: dvui.Options = .{ .id_extra = i, .min_size_content = .{ .h = 44 }, .border = .all(if (chosen) 3 else 0), .color_border = .{ .color = theme.orange[0] }, .color_fill = .{ .color = theme.washes[0] }, .color_text = .{ .color = if (i == 0) theme.ink else theme.tab_off_ink } };
-        if (i == 0) {
-            _ = dvui.button(@src(), name ++ " · " ++ hint, .{}, opts);
-        } else dvui.labelNoFmt(@src(), name ++ " · " ++ hint, .{}, opts.override(.{ .background = true, .color_text = .{ .color = theme.tab_off_ink } }));
+        const off = i > 0 and !yours.state.connected;
+        const opts: dvui.Options = .{ .id_extra = i, .tag = lib.fmt("heronin-agent-{d}", .{i}), .min_size_content = .{ .h = 44 }, .border = .all(if (@backingInt(settings.agent) == i) 3 else 0), .color_border = .{ .color = theme.orange[0] }, .color_fill = .{ .color = theme.washes[0] }, .color_text = .{ .color = if (off) theme.tab_off_ink else theme.ink } };
+        if (dvui.button(@src(), name ++ " · " ++ hint, .{ .grayed = off }, opts) and !off) settings.agent = @fromBackingInt(@intCast(i));
     }
     lib.label(@src(), "Connect", .{});
-    inline for (.{ "Address", "Key (kept on your Heronin server)", "Test with one photo" }, 0..) |text, i| dvui.labelNoFmt(@src(), text, .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-connect-{d}", .{i}), .min_size_content = .{ .h = 44 }, .color_text = .{ .color = theme.tab_off_ink }, .background = true, .color_fill = .{ .color = theme.chip } });
+    const s = &yours.state;
+    entry(0, "heronin-connect-address", &s.address, "Address", null);
+    entry(1, "heronin-connect-key", &s.key, if (s.has_key) "Key saved" else "Key (kept on your Heronin server)", "*");
+    toggle(3, "Model endpoint (Messages API)", &s.wrap);
+    if (s.wrap) entry(2, "heronin-connect-model", &s.model, "Model", null);
+    if (dvui.button(@src(), "Save", .{}, field.override(.{ .tag = "heronin-connect-save" }))) yours.save();
+    if (s.saved != .unknown) lib.label(@src(), if (s.saved == .saved) "Saved" else "Could not save", .{});
     toggle(0, "Send previews to the tagging agent", &settings.auto);
     toggle(1, lib.fmt("Ask me below {d} percent", .{auto_accept_shown}), &settings.ask_below);
     toggle(2, "Use location to narrow guesses", &settings.use_place);
     lib.label(@src(), "Place names: GeoNames (CC BY 4.0), looked up on your Heronin server", .{ .id_extra = 0 });
     lib.label(@src(), "Only the place is sent, never the photo's location data", .{});
+}
+const field: dvui.Options = .{ .min_size_content = .{ .w = 300, .h = 44 }, .background = true, .color_fill = .{ .color = theme.chip }, .color_text = .{ .color = theme.ink } };
+fn entry(id: usize, tag: []const u8, buffer: []u8, placeholder: []const u8, password: ?[]const u8) void {
+    dvui.textEntry(@src(), .{ .text = .{ .buffer = buffer[0 .. buffer.len - 1] }, .placeholder = placeholder, .password_char = password }, field.override(.{ .id_extra = id, .tag = tag })).deinit();
 }
 fn toggle(id: usize, text: []const u8, value: *bool) void {
     if (dvui.button(@src(), text, .{}, .{ .id_extra = id, .min_size_content = .{ .h = 44 }, .color_fill = .{ .color = if (value.*) theme.olive[0] else theme.chip }, .color_text = .{ .color = if (value.*) theme.card else theme.ink } })) value.* = !value.*;

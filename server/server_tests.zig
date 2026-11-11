@@ -6,6 +6,62 @@ const Fake = @import("fake_tagger.zig").Fake;
 const server = @import("main.zig");
 test {
     _ = @import("claude_tests.zig");
+    _ = @import("yours_tests.zig");
+}
+const Agents = struct {
+    arena: std.heap.ArenaAllocator = .init(a),
+    sign_in: @import("auth.zig").Auth = .{ .gpa = a, .io = std.testing.io, .data = "", .random = undefined, .google = undefined },
+    stored: @import("yours.zig").Yours = .{ .gpa = a, .io = std.testing.io, .path = "" },
+    fn send(self: *Agents, method: []const u8, path: []const u8, body: []const u8, yours: ?wire.Tagger) ![]const u8 {
+        const raw = try std.fmt.allocPrint(self.arena.allocator(), "{s} {s} HTTP/1.1\r\nCookie: heronin_session={s}\r\nContent-Length: {d}\r\n\r\n{s}", .{ method, path, std.fmt.bytesToHex(@as([32]u8, @splat(1)), .lower), body.len, body });
+        var reader = std.Io.Reader.fixed(raw);
+        var writer: std.Io.Writer.Allocating = .init(self.arena.allocator());
+        var http = std.http.Server.init(&reader, &writer.writer);
+        var request = try http.receiveHead();
+        try server.serve(&request, self.arena.allocator(), fine.tagger(), yours, logic.default_threshold, 42, .{}, &self.sign_in, &self.stored);
+        return writer.written()[9..];
+    }
+};
+fn fixedTag(_: *anyopaque, allocator: std.mem.Allocator, _: wire.Request) !wire.Answer {
+    return .{ .candidates = try allocator.dupe(wire.Candidate, &.{ .{ .species = "grbher3", .confidence = 0.9 }, .{ .species = "osprey", .confidence = 0.7 } }), .model = "mine" };
+}
+const fixed: wire.Tagger = .{ .ctx = &fine, .tagFn = fixedTag };
+test "agent routes: both, 409 without yours, saved key kept and never sent, sign-in needed" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var f: Agents = .{};
+    defer f.arena.deinit();
+    defer f.stored.deinit();
+    defer f.sign_in.deinit();
+    const tag = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":1700000000,\"agent\":\"both\",\"auto_accept\":true}";
+    for ([_]i64{ std.math.minInt(i64), std.math.maxInt(i64) }) |at| {
+        const extreme = try std.fmt.allocPrint(f.arena.allocator(), "{{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":{d},\"agent\":\"both\",\"auto_accept\":true}}", .{at});
+        try expect(std.mem.startsWith(u8, try f.send("POST", "/api/tag", extreme, fixed), "400"));
+    }
+    const refused = try f.send("POST", "/api/tag", tag, null);
+    try expect(std.mem.startsWith(u8, refused, "409") and std.mem.endsWith(u8, refused, "{\"error\":\"connect your agent\"}"));
+    const response = try f.send("POST", "/api/tag", tag, fixed);
+    const both = try std.json.parseFromSliceLeaky(wire.Response, f.arena.allocator(), response[std.mem.indexOf(u8, response, "\r\n\r\n").? + 4 ..], .{});
+    const expected = logic.decide(.both, try fine.tagger().tag(f.arena.allocator(), input(0)), try fixed.tag(f.arena.allocator(), input(0)), logic.default_threshold, 42);
+    try equal(expected.state, both.state);
+    try equal(@as(usize, 3), both.tags.len);
+    for (expected.tags[0..3], both.tags) |want, got| try strings(want.species, got.species);
+    try expect(std.mem.startsWith(u8, try f.send("POST", "/api/tag", "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":9223372036854775808,\"agent\":\"yours\",\"auto_accept\":true}", fixed), "400"));
+    for ([_][]const u8{ "GET", "POST" }) |method| try expect(std.mem.endsWith(u8, try f.send(method, "/api/agent", "{}", null), "{\"error\":\"sign-in not configured\"}"));
+    f.sign_in.config = .{ .id = "test-id", .secret = "", .public_url = "https://example.invalid/heronin", .allow = &.{} };
+    f.stored.path = try std.fs.path.join(f.arena.allocator(), &.{ std.testing.TmpDir.parent_dir_path, &tmp.sub_path, "yours.zon" });
+    try expect(std.mem.startsWith(u8, try f.send("GET", "/api/agent", "", null), "401"));
+    var hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(&@as([32]u8, @splat(1)), &hash, .{});
+    try f.sign_in.sessions.append(a, .{ .hash = hash, .email = try a.dupe(u8, "bird@example.invalid"), .expires = 100 });
+    try expect(std.mem.startsWith(u8, try f.send("POST", "/heronin/api/agent", "{\"address\":\"https://agent.example.invalid\",\"key\":\"k1\",\"wrap\":false,\"model\":\"\"}", null), "204"));
+    try expect(std.mem.startsWith(u8, try f.send("POST", "/api/agent", "{\"address\":\"http://127.0.0.1:9000\",\"key\":\"\",\"wrap\":false,\"model\":\"\"}", null), "204"));
+    try strings("k1", f.stored.saved.key);
+    try expect(std.mem.endsWith(u8, try f.send("GET", "/api/agent", "", null), "\r\n{\"address\":\"http://127.0.0.1:9000\",\"wrap\":false,\"model\":\"\",\"has_key\":true}"));
+    for ([_][]const u8{ "{\"address\":\"http://agent.example.invalid\",\"key\":\"k2\"}", "nope" }) |body| try expect(std.mem.endsWith(u8, try f.send("POST", "/api/agent", body, null), "{\"error\":\"invalid agent\"}"));
+    const huge = try std.fmt.allocPrint(f.arena.allocator(), "{{\"address\":\"https://agent.example.invalid\",\"key\":\"{s}\"}}", .{&@as([65536]u8, @splat('k'))});
+    try expect(std.mem.startsWith(u8, try f.send("POST", "/api/agent", huge, null), "400"));
+    try strings("k1", f.stored.saved.key);
 }
 const expect = std.testing.expect;
 const equal = std.testing.expectEqual;

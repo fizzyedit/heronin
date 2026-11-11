@@ -5,6 +5,7 @@ const Fake = @import("fake_tagger.zig").Fake;
 const Gazetteer = @import("place_names.zig").Gazetteer;
 const auth = @import("auth.zig");
 const Claude = @import("claude_tagger.zig").Claude;
+const yours_file = @import("yours.zig");
 pub const Config = struct { google: ?auth.Config = null, gazetteer: []const u8 = "geonames.txt", port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake", claude: ?Claude.Config = null };
 pub fn checkConfig(config: Config) !void {
     const claude = std.mem.eql(u8, config.tagger, "claude") and config.claude != null and config.claude.?.key.len > 0;
@@ -14,19 +15,23 @@ const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
 }
-const Route = enum { tag, place, login, callback, token, logout };
+const Route = enum { tag, place, login, callback, token, logout, agent };
 fn route(target: []const u8) ?Route {
     const path = if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target;
-    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place }, .{ "/api/login", .login }, .{ "/api/oauth/callback", .callback }, .{ "/api/token", .token }, .{ "/api/logout", .logout } });
+    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place }, .{ "/api/login", .login }, .{ "/api/oauth/callback", .callback }, .{ "/api/token", .token }, .{ "/api/logout", .logout }, .{ "/api/agent", .agent } });
     return paths.get(path[0 .. std.mem.indexOfScalar(u8, path, '?') orelse path.len]);
 }
 pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer) !void {
-    return handleAuth(request, allocator, tagger, threshold, now, gazetteer, null);
+    return serve(request, allocator, tagger, null, threshold, now, gazetteer, null, null);
 }
 pub fn handleAuth(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth) !void {
+    return serve(request, allocator, tagger, null, threshold, now, gazetteer, sign_in, null);
+}
+pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, connected: ?wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth, stored: ?*yours_file.Yours) !void {
     const matched = route(request.head.target) orelse return respond(request, .not_found, "{\"error\":\"not found\"}");
-    if (request.head.method != (if (matched != .tag and matched != .logout) std.http.Method.GET else .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched != .tag and matched != .logout) "GET" else "POST" }, .{ .name = "content-type", .value = "application/json" } } });
-    if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout)) {
+    const post = matched == .tag or matched == .logout;
+    if (request.head.method != (if (post) std.http.Method.POST else .GET) and !(matched == .agent and request.head.method == .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched == .agent) "GET, POST" else if (post) "POST" else "GET" }, .{ .name = "content-type", .value = "application/json" } } });
+    if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout or matched == .agent)) {
         var headers = request.iterateHeaders();
         var cookie: ?[]const u8 = null;
         while (headers.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "cookie")) {
@@ -60,16 +65,28 @@ pub fn handleAuth(request: *std.http.Server.Request, allocator: std.mem.Allocato
         defer allocator.free(json);
         return respond(request, .ok, json);
     }
+    if (matched == .agent and (stored == null or sign_in == null or sign_in.?.config == null)) return respond(request, .service_unavailable, "{\"error\":\"sign-in not configured\"}");
+    const s = if (stored) |agent| agent.saved else yours_file.Saved{};
+    if (matched == .agent and request.head.method == .GET) return respond(request, .ok, try std.json.Stringify.valueAlloc(allocator, .{ .address = s.address, .wrap = s.wrap, .model = s.model, .has_key = s.key.len > 0 }, .{}));
     const reader = try request.readerExpectContinue(&.{});
     const body = reader.allocRemaining(allocator, .limited(cap)) catch |err| return respond(request, if (err == error.StreamTooLong) .payload_too_large else .bad_request, "{\"error\":\"invalid body\"}");
     defer allocator.free(body);
+    if (matched == .agent) {
+        var saved = std.json.parseFromSliceLeaky(yours_file.Saved, allocator, body, .{}) catch yours_file.Saved{};
+        if (saved.key.len == 0) saved.key = s.key;
+        if (!yours_file.valid(saved)) return respond(request, .bad_request, "{\"error\":\"invalid agent\"}");
+        stored.?.save(saved) catch |err| return if (err == error.TooLarge) respond(request, .bad_request, "{\"error\":\"invalid agent\"}") else err;
+        return request.respond("", .{ .status = .no_content, .keep_alive = false });
+    }
     const parsed = std.json.parseFromSlice(wire.Request, allocator, body, .{}) catch return respond(request, .bad_request, "{\"error\":\"invalid request\"}");
     defer parsed.deinit();
     const input = parsed.value;
+    if (!@import("contract_tagger.zig").Contract.dated(input.taken_at)) return respond(request, .bad_request, "{\"error\":\"invalid request\"}");
+    if (input.agent != .ours and connected == null) return respond(request, .conflict, "{\"error\":\"connect your agent\"}");
     var ours: ?wire.Answer = null;
     var yours: ?wire.Answer = null;
     if (input.agent != .yours) ours = tagger.tag(allocator, input) catch return respond(request, .bad_gateway, "{\"error\":\"tagger unavailable\"}");
-    if (input.agent != .ours) yours = tagger.tag(allocator, input) catch return respond(request, .bad_gateway, "{\"error\":\"tagger unavailable\"}");
+    if (input.agent != .ours) yours = connected.?.tag(allocator, input) catch return respond(request, .bad_gateway, "{\"error\":\"tagger unavailable\"}");
     const decision = decisions.decide(input.agent, ours, yours, if (input.auto_accept) threshold else 2, now);
     std.log.info("{s} {s}", .{ std.fmt.bytesToHex(input.md5.bytes, .lower), @tagName(decision.state) });
     const json = try std.json.Stringify.valueAlloc(allocator, wire.Response{ .state = decision.state, .tags = decision.tags[0..decision.len] }, .{});
@@ -110,6 +127,9 @@ pub fn main(init: std.process.Init) !void {
     var fake: Fake = .{};
     var claude: Claude = .{ .io = init.io, .config = config.claude orelse .{ .key = "" } };
     const tagger = if (std.mem.eql(u8, config.tagger, "claude")) claude.tagger() else fake.tagger();
+    var yours: yours_file.Yours = .{ .gpa = init.gpa, .io = init.io, .path = try std.fs.path.join(allocator, &.{ init.environ_map.get("HERONIN_DATA") orelse ".", "yours.zon" }) };
+    defer yours.deinit();
+    try yours.load();
     while (true) {
         const stream = listener.accept(init.io) catch |err| {
             std.log.warn("accept failed: {s}", .{@errorName(err)});
@@ -124,7 +144,7 @@ pub fn main(init: std.process.Init) !void {
         var writer = stream.writer(init.io, &write_buffer);
         var server = std.http.Server.init(&reader.interface, &writer.interface);
         var request = server.receiveHead() catch continue;
-        handleAuth(&request, arena.allocator(), tagger, config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in) catch {
+        serve(&request, arena.allocator(), tagger, yours.tagger(init.io), config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in, &yours) catch {
             respond(&request, .internal_server_error, "{\"error\":\"internal\"}") catch {};
         };
     }
