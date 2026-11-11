@@ -301,3 +301,59 @@ test "import during listing safely refreshes lists queued from its callback" {
     try t.expectEqual(2, callback.list.calls);
     try t.expectEqualStrings("2025/IMG_0004.jpg", (try callback.list.result)[1].photo.id);
 }
+test "deinit with an import and a places save pending runs no callback" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    var imported: Sink(api.Imported) = .{};
+    var places: Sink([]const model.Place) = .{};
+    drive.store().importFile("IMG_0001.jpg", "bytes", &imported, @TypeOf(imported).done);
+    drive.store().savePlaces(&.{}, &places, @TypeOf(places).done);
+    drive.deinit();
+    mem.fs().pump();
+    try t.expectEqual(0, imported.calls);
+    try t.expectEqual(0, places.calls);
+}
+test "deinit while the listing reads runs no callback" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try seed(&mem);
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    var list: List = .{};
+    drive.store().list(null, 10, &list, List.done);
+    drive.deinit();
+    mem.fs().pump();
+    try t.expectEqual(0, list.calls);
+}
+test "a places file deleted during a conflicting save is written again" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try mem.putDir("/Heronin");
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const store = drive.store();
+    var places: Sink([]const model.Place) = .{};
+    store.places(&places, @TypeOf(places).done);
+    store.pump();
+    const initial = [_]model.Place{.{ .id = 1, .name = "Test place", .lat = 0, .lon = 0 }};
+    store.savePlaces(&initial, &places, @TypeOf(places).done);
+    store.pump();
+    store.pump();
+    try t.expectEqual(2, places.calls);
+    _ = try mem.fs().remove("/Heronin/places.json", written, null);
+    mem.fs().pump();
+    const saved = [_]model.Place{.{ .id = 2, .name = "Another place", .lat = 60, .lon = -30 }};
+    store.savePlaces(&saved, &places, @TypeOf(places).done);
+    // Write, reread (NotFound), rewrite, stat: answers on the fourth pump.
+    for (0..3) |_| {
+        store.pump();
+        try t.expectEqual(2, places.calls);
+    }
+    store.pump();
+    try t.expectEqual(3, places.calls);
+    try t.expectEqualDeep(&saved, try places.result);
+    store.places(&places, @TypeOf(places).done);
+    store.pump();
+    try t.expectEqual(4, places.calls);
+    try t.expectEqualDeep(&saved, try places.result);
+}
