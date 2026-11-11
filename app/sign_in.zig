@@ -2,15 +2,25 @@ const std = @import("std");
 const core = @import("core");
 const dvui = @import("dvui");
 pub var account: Account = .{};
-// zig fmt: off
-pub const Account = struct { state: enum { off, checking, signed_out, opening, signed_in } = if (@import("builtin").cpu.arch == .wasm32) .checking else .off, email: ?[]const u8 = null, failed: enum { none, popup, sign_out } = .none, arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator), transport: ?core.vfs.http.Transport = null, base: []const u8 = "", job: ?core.vfs.http.Job = null, pub const deinit = deinitAccount; };
+pub const Account = struct {
+    state: enum { off, checking, signed_out, opening, signed_in } = if (@import("builtin").cpu.arch == .wasm32) .checking else .off,
+    email: ?[]const u8 = null,
+    failed: enum { none, popup, sign_out } = .none,
+    arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+    transport: ?core.vfs.http.Transport = null,
+    base: []const u8 = "",
+    job: ?core.vfs.http.Job = null,
+    pub const deinit = deinitAccount;
+};
 fn deinitAccount(self: *Account) void {
     if (self.job) |job| self.transport.?.cancel(job);
     if (@import("builtin").cpu.arch == .wasm32) core.transport.WebOAuth.cancel();
     self.arena.deinit();
     self.* = .{};
 }
-pub fn ready() bool { return account.state == .signed_in or account.state == .off; }
+pub fn ready() bool {
+    return account.state == .signed_in or account.state == .off;
+}
 pub fn check(transport: core.vfs.http.Transport, base: []const u8) void {
     account.transport, account.base, account.state = .{ transport, base, .checking };
     send(.GET, "token");
@@ -54,8 +64,13 @@ pub fn opened(_: ?*anyopaque, result: ?[]u8) void {
         account.state, account.failed = .{ .signed_out, .popup };
     }
 }
-pub fn signOut() void { account.failed = .none; send(.POST, "logout"); }
-pub fn lost() void { if (account.state == .signed_in) account.state = .signed_out; }
+pub fn signOut() void {
+    account.failed = .none;
+    send(.POST, "logout");
+}
+pub fn lost() void {
+    if (account.state == .signed_in) account.state = .signed_out;
+}
 pub fn button(id: usize) void {
     const opening = account.state == .opening;
     if (dvui.button(@src(), if (opening) "Signing in…" else "Sign in", .{ .grayed = opening }, .{ .id_extra = id, .tag = "heronin-sign-in", .min_size_content = .{ .h = 44 } }) and !opening) open();
@@ -66,5 +81,6 @@ pub fn banner() void {
     button(0);
     if (account.failed == .popup) dvui.labelNoFmt(@src(), "Sign-in did not finish. Allow pop-ups for this site and try again.", .{}, .{ .tag = "heronin-sign-in-note" });
 }
-fn failure() void { account.state, account.failed = if (account.state == .checking) .{ .off, .none } else .{ .signed_in, .sign_out }; }
-// zig fmt: on
+fn failure() void {
+    account.state, account.failed = if (account.state == .checking) .{ .off, .none } else .{ .signed_in, .sign_out };
+}

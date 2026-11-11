@@ -361,3 +361,28 @@ test "Connect fields keep their chip fill height and text ink" {
         try dvui.testing.settle(draw);
     }
 }
+
+test "signed out Agent and banner Sign in buttons have distinct widget ids" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    const sign = @import("sign_in.zig");
+    defer sign.account.deinit();
+    sign.account.state = .signed_out;
+    try dvui.testing.settle(struct {
+        fn frame() !dvui.App.Result {
+            var box = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .both });
+            defer box.deinit();
+            sign.banner();
+            const banner_id = (try dvui.testing.tagGet("heronin-sign-in")).id;
+            // Both buttons share a test tag; allow the second registration
+            // while retaining dvui's separate duplicate widget-id checks.
+            dvui.currentWindow().tags.map.getPtr("heronin-sign-in").?.used = false;
+            var settings: @import("tag_queue.zig").Settings = .{};
+            @import("views/agent.zig").draw(&settings);
+            const agent_id = (try dvui.testing.tagGet("heronin-sign-in")).id;
+            try std.testing.expect(banner_id != agent_id);
+            return .ok;
+        }
+    }.frame);
+    try dvui.testing.expectVisible("heronin-sign-in");
+}
