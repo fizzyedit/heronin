@@ -504,3 +504,56 @@ test "rename unnamed and saved places without selecting; cancel and near prefill
     fake.store().pump();
     try std.testing.expectEqualStrings("Garden", fake.saved[0].name);
 }
+
+const api = @import("store.zig");
+const thumbnail_png =
+    "\x89PNG\x0d\x0a\x1a\x0a\x00\x00\x00\x0dIHDR" ++
+    "\x00\x00\x00\x01\x00\x00\x00\x01\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02" ++
+    "\x00\x00\x00\x0bIDAT\x78\xda\x63\x64\xf8\x0f\x00\x01\x05\x01\x01\x27\x18\xe3\x66" ++
+    "\x00\x00\x00\x00IEND\xae\x42\x60\x82";
+fn encodedThumbnail(
+    _: *anyopaque,
+    id: []const u8,
+    _: u32,
+    ctx: ?*anyopaque,
+    done: api.Done(api.Thumbnail),
+) void {
+    done(ctx, if (std.mem.eql(u8, id, fake.items[0].photo.id))
+        .{ .encoded = thumbnail_png }
+    else
+        .{ .wash = 2 });
+}
+test "encoded thumbnail stays inside its tile and opens in photo" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    current = .library;
+    var vtable = fake.store().vtable.*;
+    vtable.thumbnail = encodedThumbnail;
+    const store: api.Store = .{ .ptr = &fake, .vtable = &vtable };
+    store.list(null, 60, &state, library.State.listed);
+    store.pump();
+    for (state.items, state.thumbs[0..state.items.len]) |item, *thumb| {
+        thumb.owner = &state;
+        store.thumbnail(item.photo.id, 600, thumb, library.State.thumbnail);
+    }
+    try std.testing.expectEqualSlices(u8, thumbnail_png, state.thumbs[0].image);
+    try std.testing.expect(state.thumbs[0].image.ptr != thumbnail_png.ptr);
+    try std.testing.expectEqual(@as(u8, 2), state.thumbs[1].wash);
+    try dvui.testing.settle(frame);
+    const image = (try dvui.testing.tagGet("tile-image-0")).rect;
+    const box = (try dvui.testing.tagGet("tile-box-0")).rect;
+    try std.testing.expect(image.w > 0 and image.h > 0);
+    try std.testing.expect(image.x >= box.x and image.y >= box.y);
+    try std.testing.expect(image.x + image.w <= box.x + box.w);
+    try std.testing.expect(image.y + image.h <= box.y + box.h);
+    try std.testing.expect(dvui.tagGet("tile-image-1") == null);
+    state.open = state.items[0].photo.id;
+    try dvui.testing.settle(frame);
+    try dvui.testing.expectVisible("photo-image");
+}
