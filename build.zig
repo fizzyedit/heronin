@@ -3,7 +3,17 @@ const fizzy = @import("fizzy");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseSmall });
+    const android_sdk = b.option([]const u8, "android-sdk", "The Android SDK directory");
+    const android_keystore = b.option(
+        []const u8,
+        "android-keystore",
+        "Debug keystore (alias androiddebugkey, password android)",
+    );
     const fizzy_dep = b.dependency("fizzy", .{ // TODO(web-storage)
+        .@"android-sdk" = android_sdk,
+        .@"android-keystore" = android_keystore,
+        .@"app-bundle-id" = @as([]const u8, "dev.fizzy.heronin"),
+        .@"app-package-title" = @as([]const u8, "Heronin"),
         .target = target,
         .optimize = optimize,
         .@"defer-app" = true,
@@ -18,6 +28,15 @@ pub fn build(b: *std.Build) !void {
     const manifest = try std.Io.Dir.cwd().readFileAlloc(b.graph.io, try b.root.joinString(b.allocator, "app/plugin.zig.zon"), b.allocator, .unlimited);
     const model = b.addModule("model", .{ .root_source_file = b.path("model/model.zig"), .target = target, .optimize = optimize });
     const app = b.createModule(.{ .root_source_file = b.path("app/plugin.zig"), .target = target, .optimize = optimize });
+    const server_url = b.option(
+        []const u8,
+        "server-url",
+        "The Heronin server the native app calls " ++
+            "(default: none; HERONIN_TAG_URL or http://127.0.0.1:8790)",
+    ) orelse "";
+    const opts = b.addOptions();
+    opts.addOption([]const u8, "server_url", server_url);
+    app.addOptions("heronin_build", opts);
     app.addImport("model", model);
     const wire = b.createModule(.{ .root_source_file = b.path("server/tagger.zig"), .target = target, .optimize = optimize });
     wire.addImport("model", model);
@@ -29,6 +48,7 @@ pub fn build(b: *std.Build) !void {
     b.getInstallStep().dependOn(&install.step);
     b.step("native", "Build the native app").dependOn(&install.step);
     try fizzy.addWebSteps(b, fizzy_dep);
+    try fizzy.addApkSteps(b, fizzy_dep);
     const web_step = &b.top_level_steps.get("web").?.step;
     const patch = b.addExecutable(.{ .name = "patch-index", .root_module = b.createModule(.{ .root_source_file = b.path("tools/patch_index.zig"), .target = b.graph.host, .optimize = optimize }) });
     const patch_run = b.addRunArtifact(patch);
@@ -42,6 +62,8 @@ pub fn build(b: *std.Build) !void {
         web_step.dependOn(&copy.step);
     }
     web_step.dependOn(&page_install.step);
+    // An Android build is the APK only: the headless test graph has no Android dvui.
+    if (target.result.abi.isAndroid()) return;
     const checker_module = b.createModule(.{ .root_source_file = b.path("tools/check_public.zig"), .target = b.graph.host, .optimize = optimize });
     const checker = b.addExecutable(.{ .name = "check-public", .root_module = checker_module });
     const check_run = b.addRunArtifact(checker);
