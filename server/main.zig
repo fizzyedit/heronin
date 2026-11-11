@@ -72,7 +72,7 @@ pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, ta
             if (std.mem.eql(u8, part[0..eq], "lat")) lat = value;
             if (std.mem.eql(u8, part[0..eq], "lon")) lon = value;
         }
-        if (!std.math.isFinite(lat) or !std.math.isFinite(lon) or @abs(lat) > 90 or @abs(lon) > 180) return respond(request, .bad_request, "{}");
+        if (!std.math.isFinite(lat) or !std.math.isFinite(lon) or @abs(lat) > 90 or @abs(lon) > 180) return respond(request, .bad_request, "{\"error\":\"invalid point\"}");
         const json = try std.json.Stringify.valueAlloc(allocator, .{ .name = gazetteer.nearest(@round(lat * 1000) / 1000, @round(lon * 1000) / 1000) }, .{});
         defer allocator.free(json);
         return respond(request, .ok, json);

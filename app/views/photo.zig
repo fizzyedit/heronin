@@ -19,7 +19,7 @@ pub fn draw(state: *lib.State, store: api.Store) void {
     while (!std.mem.eql(u8, state.items[index].photo.id, state.open.?)) : (index += 1) {}
     const item = &state.items[index];
     const located = model.places.placeOf(item.photo, state.photos);
-    const place = lib.logic.placeText(located, state.places, if (located) |point| lib.places_client.near(&lib.places_client.names, point) else null);
+    const place = lib.photoPlace(item.photo, state.photos, state.places);
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
     defer scroll.deinit();
     lib.label(@src(), lib.fmt("{s}{s}{s}", .{ lib.day(item.photo), if (place != null) " · " else "", place orelse "" }), .{});

@@ -14,6 +14,8 @@ fn Reply(comptime T: type) type {
     };
 }
 test "deferred pages cover the exact generated fixture and places" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
     var fake = try FakeStore.init(std.testing.allocator);
     defer fake.deinit();
     const store = fake.store();
@@ -76,7 +78,7 @@ test "deferred pages cover the exact generated fixture and places" {
                     1 => -29.9895 + offset,
                     else => if (i % 2 == 0) east_lon else west_lon,
                 }, point.lon);
-                try std.testing.expectEqualStrings(([_][]const u8{ "Backyard", "Marsh trail", "Unnamed place" })[i % 3], @import("library_logic.zig").placeText(.{ .lat = point.lat, .lon = point.lon, .src = .photo }, places, null).?);
+                try std.testing.expectEqualStrings(([_][]const u8{ "Backyard", "Marsh trail", "Unnamed place" })[i % 3], @import("library_logic.zig").placeText(arena.allocator(), .{ .lat = point.lat, .lon = point.lon, .src = .photo }, places, null).?);
             } else missing += 1;
             try eq(@as(usize, if (i % 6 == 0) 1 else if (i % 6 == 1) 3 else 0), item.tags.len);
             for (item.tags, 0..) |tag, j| {

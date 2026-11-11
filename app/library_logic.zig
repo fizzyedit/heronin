@@ -46,9 +46,9 @@ pub fn placeTiles(heights: []const f32, columns: []f32, out: []usize) void {
     }
 }
 
-pub fn placeText(located: ?model.places.Located, saved: []const model.Place, near_name: ?[]const u8) ?[]const u8 {
+pub fn placeText(a: std.mem.Allocator, located: ?model.places.Located, saved: []const model.Place, near_name: ?[]const u8) ?[]const u8 {
     const point = located orelse return null;
-    return if (model.places.namedPlace(point, saved)) |place| place.name else if (near_name) |name| std.fmt.allocPrint(@import("dvui").currentWindow().arena(), "near {s}", .{name}) catch unreachable else model.places.unnamed;
+    return if (model.places.namedPlace(point, saved)) |place| place.name else if (near_name) |name| std.fmt.allocPrint(a, "near {s}", .{name}) catch unreachable else model.places.unnamed;
 }
 
 pub fn tileMeta(a: std.mem.Allocator, item: Item, place: ?[]const u8, day: []const u8) []const u8 {
