@@ -1,4 +1,5 @@
 test {
+    _ = @import("drive_link_tests.zig");
     _ = @import("sign_in_tests.zig");
     _ = @import("views/agent.zig");
     _ = @import("tag_tests.zig");

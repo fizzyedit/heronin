@@ -71,3 +71,49 @@ test "web account checks popup logout and session loss" {
     try std.testing.expectEqual(before + 1, count);
     try std.testing.expectEqual(.GET, req.method);
 }
+fn noTokenEvent(_: *anyopaque, event: @import("fizzy_sdk").Host.events.Event) void {
+    std.testing.expect(std.mem.indexOf(u8, event.payload, "tok-1") == null) catch unreachable;
+}
+test "token response reaches only the drive command arguments" {
+    const sdk = @import("fizzy_sdk");
+    const drive = @import("drive_link.zig");
+    var host = sdk.Host.init(std.testing.allocator);
+    defer host.deinit();
+    var files = core.FileTable.init(std.testing.allocator, std.testing.io);
+    defer files.deinit();
+    host.files = &files;
+    var mem = try core.vfs.Mem.init(std.testing.allocator);
+    defer mem.deinit();
+    defer drive.link.deinit();
+    drive.link.host = &host;
+    var stub: @import("drive_link_tests.zig").Stub = .{ .host = &host, .mem = &mem };
+    defer stub.deinit();
+    var plugin: sdk.Plugin = undefined;
+    try stub.register(&plugin);
+    try host.subscribe(.{ .event = "*", .owner = &plugin, .handler = noTokenEvent });
+    sign.account = .{ .arena = .init(std.testing.allocator) };
+    defer sign.account.deinit();
+    var dummy: u8 = 0;
+    const transport: http.Transport = .{ .ptr = &dummy, .vtable = &.{ .request = request, .cancel = cancel, .pump = pump } };
+    sign.check(transport, "");
+    try answer(200, "{\"access_token\":\"tok-1\",\"expires_in\":3600,\"email\":\"a@example.invalid\"}");
+    try std.testing.expect(std.mem.indexOf(u8, stub.seen.?, "tok-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stub.seen.?, "3600") != null);
+    host.deliverEvents();
+    try std.testing.expectEqualStrings("a@example.invalid", sign.account.email.?);
+    drive.link.retry = true;
+    const before = count;
+    sign.step();
+    sign.step();
+    try std.testing.expectEqual(before + 1, count);
+    try answer(200, "{\"access_token\":\"tok-1\",\"expires_in\":3600,\"email\":\"a@example.invalid\"}");
+    sign.signOut();
+    drive.link.token_due = true;
+    sign.step();
+    try std.testing.expectEqual(.signed_in, sign.account.state);
+    try answer(204, "");
+    try std.testing.expectEqual(.absent, drive.link.state);
+    try std.testing.expect(!stub.mounted);
+    sign.lost();
+    host.deliverEvents();
+}

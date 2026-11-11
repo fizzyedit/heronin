@@ -1,3 +1,4 @@
+const drive_link = @import("drive_link.zig");
 const sign_in = @import("sign_in.zig");
 var places_base: ?[]const u8 = if (@import("builtin").cpu.arch == .wasm32) "" else null;
 const sdk = @import("fizzy_sdk");
@@ -28,6 +29,7 @@ pub fn register(host: *sdk.Host) !void {
     }
     plugin.state = @ptrCast(host);
     try host.registerPlugin(&plugin);
+    try drive_link.register(host);
     try host.registerSurface(.{ .id = "heronin.library", .owner = &plugin, .title = "Library", .keywords = &.{"heronin"}, .scrolls_itself = true, .draw = draw });
 }
 fn deinit(_: *anyopaque) void {
@@ -36,6 +38,7 @@ fn deinit(_: *anyopaque) void {
     if (fake != null) @import("agent_settings.zig").deinit();
     if (fake != null) agent.deinit();
     tagging.deinit();
+    drive_link.link.deinit();
     if (fake) |*f| f.deinit();
     fake = null;
     for (queue.rows.items) |row| queue.allocator.free(row.name);
@@ -53,16 +56,25 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         @import("agent_settings.zig").load(agent.transport, places_base);
         state.tag_queue = &tagging;
         fake = try @import("fake_store.zig").FakeStore.init(@import("std").heap.page_allocator);
-        fake.?.store().list(null, 60, &state, library.State.listed);
-        fake.?.store().places(&state, library.State.placed);
+        drive_link.link.current(fake.?.store()).list(null, 60, &state, library.State.listed);
+        drive_link.link.current(fake.?.store()).places(&state, library.State.placed);
+    }
+    sign_in.step();
+    drive_link.link.step();
+    if (drive_link.link.changed) {
+        drive_link.link.changed = false;
+        state.stale = true;
+        drive_link.link.current(fake.?.store()).list(null, 60, &state, library.State.listed);
+        drive_link.link.current(fake.?.store()).places(&state, library.State.placed);
     }
     add.pick(&queue);
-    if (current != .add) queue.step(fake.?.store());
+    if (current != .add) queue.step(drive_link.link.current(fake.?.store()));
     if (queue.busy) dvui.refresh(null, @src(), null);
     agent.transport.pump();
     if (@import("builtin").cpu.arch == .wasm32) @import("core").transport.WebOAuth.pump();
+    if (drive_link.link.state == .waiting or drive_link.link.retry) dvui.refresh(null, @src(), null);
     if (sign_in.account.state == .checking) dvui.refresh(null, @src(), null);
-    fake.?.store().pump();
+    drive_link.link.current(fake.?.store()).pump();
     var finished: usize = 0;
     for (queue.rows.items) |row| {
         if (row.state == .imported) finished += 1;
@@ -72,19 +84,19 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         state.stale = true;
         dvui.refresh(null, @src(), null);
     }
-    const reloaded = state.reloadBetweenJobs(fake.?.store(), tagging.busy != null, current == .library or current == .species);
+    const reloaded = state.reloadBetweenJobs(drive_link.link.current(fake.?.store()), tagging.busy != null, current == .library or current == .species);
     tagging.tags_allocator = state.arena.allocator();
     tagging.items = state.items;
     tagging.photos = state.photos;
-    if (sign_in.ready() and !reloaded) tagging.step(fake.?.store(), agent.post);
+    if (sign_in.ready() and drive_link.link.state != .mounted and !reloaded) tagging.step(drive_link.link.current(fake.?.store()), agent.post);
     if (sign_in.ready()) library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
     if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);
     if (!state.requested and state.items.len > 0) {
-        for (state.items, 0..) |item, i| fake.?.store().thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
+        for (state.items, 0..) |item, i| drive_link.link.current(fake.?.store()).thumbnail(item.photo.id, 600, &state.washes[i], library.State.thumbnail);
         state.requested = true;
         dvui.refresh(null, @src(), null);
     }
-    if (current == .agent) agent.page(&current, &settings) else root.draw(&current, &state, &queue, fake.?.store());
+    if (current == .agent) agent.page(&current, &settings) else root.draw(&current, &state, &queue, drive_link.link.current(fake.?.store()));
     return .ok;
 }
