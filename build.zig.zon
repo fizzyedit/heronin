@@ -4,5 +4,5 @@
     .version = "0.1.0",
     .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "app", "model", "layout.zon", "assets" },
-    .dependencies = .{ .fizzy = .{ .url = "https://github.com/fizzyedit/fizzy/archive/38dc20d7a0afd7a1cd108332701083cb6caedcfa.tar.gz", .hash = "fizzy-0.2.0-c46aVtPKyACXufBovwOBPgbXbKwCz2Jvtxx8k5eeKC0d" } },
+    .dependencies = .{ .fizzy = .{ .url = "https://github.com/fizzyedit/fizzy/archive/d9d816db9758beed7bfc01dbaa29fbc894db7370.tar.gz", .hash = "fizzy-0.2.0-c46aVnhOyQDti5ZL0X-hGdspfZoR0xFvinwq1EEBRW0M" } },
 }

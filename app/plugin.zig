@@ -1,6 +1,7 @@
 const drive_link = @import("drive_link.zig");
 const sign_in = @import("sign_in.zig");
 var places_base: ?[]const u8 = if (@import("builtin").cpu.arch == .wasm32) "" else null;
+const build = @import("heronin_build");
 const sdk = @import("fizzy_sdk");
 const dvui = @import("dvui");
 const root = @import("views/root.zig");
@@ -24,8 +25,12 @@ pub fn register(host: *sdk.Host) !void {
         agent.url = "/heronin/api/tag";
     } else {
         const env = @import("core").platform.processEnviron().getAlloc(tagging.owned.allocator(), "HERONIN_TAG_URL") catch null;
-        places_base = env;
-        agent.url = try @import("tag_queue.zig").serverUrl(tagging.owned.allocator(), env, "tag");
+        places_base = env orelse if (build.server_url.len != 0) build.server_url else null;
+        agent.url = try @import("tag_queue.zig").serverUrl(
+            tagging.owned.allocator(),
+            places_base,
+            "tag",
+        );
     }
     plugin.state = @ptrCast(host);
     try host.registerPlugin(&plugin);
