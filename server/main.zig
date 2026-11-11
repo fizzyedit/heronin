@@ -75,12 +75,13 @@ pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, ta
         var saved = std.json.parseFromSliceLeaky(yours_file.Saved, allocator, body, .{}) catch yours_file.Saved{};
         if (saved.key.len == 0) saved.key = s.key;
         if (!yours_file.valid(saved)) return respond(request, .bad_request, "{\"error\":\"invalid agent\"}");
-        try stored.?.save(saved);
+        stored.?.save(saved) catch |err| return if (err == error.TooLarge) respond(request, .bad_request, "{\"error\":\"invalid agent\"}") else err;
         return request.respond("", .{ .status = .no_content, .keep_alive = false });
     }
     const parsed = std.json.parseFromSlice(wire.Request, allocator, body, .{}) catch return respond(request, .bad_request, "{\"error\":\"invalid request\"}");
     defer parsed.deinit();
     const input = parsed.value;
+    if (!@import("contract_tagger.zig").Contract.dated(input.taken_at)) return respond(request, .bad_request, "{\"error\":\"invalid request\"}");
     if (input.agent != .ours and connected == null) return respond(request, .conflict, "{\"error\":\"connect your agent\"}");
     var ours: ?wire.Answer = null;
     var yours: ?wire.Answer = null;

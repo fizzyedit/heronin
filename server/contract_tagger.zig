@@ -15,7 +15,12 @@ pub const Contract = struct {
         const all = [_]std.http.Header{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "authorization", .value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{self.key}) } };
         return allocator.dupe(std.http.Header, all[0..if (self.key.len == 0) 1 else 2]);
     }
+    // Years 1900 up to 2200, as Claude's prompt allows.
+    pub fn dated(taken_at: ?i64) bool {
+        return if (taken_at) |at| at >= -2208988800 and at < 7258118400 else true;
+    }
     pub fn body(allocator: std.mem.Allocator, r: wire.Request) ![]u8 {
+        if (!dated(r.taken_at)) return error.BadRequest;
         const place = if (r.place) |p| (if (@abs(p.lat) <= 90 and @abs(p.lon) <= 180) p else null) else null;
         return std.json.Stringify.valueAlloc(allocator, .{ .image = r.image, .taken_at = r.taken_at, .place = place }, .{});
     }

@@ -33,7 +33,11 @@ test "agent routes: both, 409 without yours, saved key kept and never sent, sign
     defer f.arena.deinit();
     defer f.stored.deinit();
     defer f.sign_in.deinit();
-    const tag = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":-9223372036854775808,\"agent\":\"both\",\"auto_accept\":true}";
+    const tag = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":1700000000,\"agent\":\"both\",\"auto_accept\":true}";
+    for ([_]i64{ std.math.minInt(i64), std.math.maxInt(i64) }) |at| {
+        const extreme = try std.fmt.allocPrint(f.arena.allocator(), "{{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"taken_at\":{d},\"agent\":\"both\",\"auto_accept\":true}}", .{at});
+        try expect(std.mem.startsWith(u8, try f.send("POST", "/api/tag", extreme, fixed), "400"));
+    }
     const refused = try f.send("POST", "/api/tag", tag, null);
     try expect(std.mem.startsWith(u8, refused, "409") and std.mem.endsWith(u8, refused, "{\"error\":\"connect your agent\"}"));
     const response = try f.send("POST", "/api/tag", tag, fixed);
@@ -55,6 +59,8 @@ test "agent routes: both, 409 without yours, saved key kept and never sent, sign
     try strings("k1", f.stored.saved.key);
     try expect(std.mem.endsWith(u8, try f.send("GET", "/api/agent", "", null), "\r\n{\"address\":\"http://127.0.0.1:9000\",\"wrap\":false,\"model\":\"\",\"has_key\":true}"));
     for ([_][]const u8{ "{\"address\":\"http://agent.example.invalid\",\"key\":\"k2\"}", "nope" }) |body| try expect(std.mem.endsWith(u8, try f.send("POST", "/api/agent", body, null), "{\"error\":\"invalid agent\"}"));
+    const huge = try std.fmt.allocPrint(f.arena.allocator(), "{{\"address\":\"https://agent.example.invalid\",\"key\":\"{s}\"}}", .{&@as([65536]u8, @splat('k'))});
+    try expect(std.mem.startsWith(u8, try f.send("POST", "/api/agent", huge, null), "400"));
     try strings("k1", f.stored.saved.key);
 }
 const expect = std.testing.expect;
