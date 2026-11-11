@@ -5,4 +5,6 @@
     .port = 8790,
     .threshold = 0.85,
     .tagger = "fake",
+    // Claude vision for Our agent: set .tagger = "claude"; the key stays on this machine.
+    // .claude = .{ .key = "", .model = "claude-sonnet-5-5" },
 }
