@@ -6,6 +6,8 @@ const a = std.testing.allocator;
 const io = std.testing.io;
 const expect = std.testing.expect;
 const equal = std.testing.expectEqualStrings;
+const tag_body = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\"," ++
+    "\"agent\":\"ours\",\"auto_accept\":true}";
 const Fixture = struct {
     arena: std.heap.ArenaAllocator = .init(a),
     tmp: std.testing.TmpDir = undefined,
@@ -57,11 +59,16 @@ const Fixture = struct {
         self.revokes += 1;
         if (self.trouble == .revoke) return error.Unavailable;
     }
-    fn request(self: *Fixture, method: []const u8, target: []const u8, now: i64) ![]const u8 {
+    fn request(
+        self: *Fixture,
+        method: []const u8,
+        target: []const u8,
+        now: i64,
+        body: []const u8,
+    ) ![]const u8 {
         var arena: std.heap.ArenaAllocator = .init(a);
         defer arena.deinit();
         const alloc = arena.allocator();
-        const body = "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"agent\":\"ours\",\"auto_accept\":true}";
         const raw = try std.fmt.allocPrint(alloc, "{s} {s} HTTP/1.1\r\nHost: localhost\r\nCookie: {s}\r\nContent-Length: {d}\r\n\r\n{s}", .{ method, target, self.cookie, body.len, body });
         var reader = std.Io.Reader.fixed(raw);
         var writer: std.Io.Writer.Allocating = .init(alloc);
@@ -71,10 +78,34 @@ const Fixture = struct {
         return self.arena.allocator().dupe(u8, writer.written());
     }
     fn callback(self: *Fixture, state: []const u8, now: i64) ![]const u8 {
-        return self.request("GET", try std.fmt.allocPrint(self.arena.allocator(), "/api/oauth/callback?code=test%20code&state={s}", .{state}), now);
+        const target = try std.fmt.allocPrint(
+            self.arena.allocator(),
+            "/api/oauth/callback?code=test%20code&state={s}",
+            .{state},
+        );
+        return self.request("GET", target, now, tag_body);
+    }
+    fn claim(self: *Fixture, verifier: []const u8, now: i64) ![]const u8 {
+        const body = try std.json.Stringify.valueAlloc(
+            self.arena.allocator(),
+            .{ .verifier = verifier },
+            .{},
+        );
+        return self.request("POST", "/api/app-session", now, body);
+    }
+    fn appLogin(self: *Fixture, verifier: []const u8) ![]const u8 {
+        var hash: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(verifier, &hash, .{});
+        const target = try std.fmt.allocPrint(
+            self.arena.allocator(),
+            "/api/login?app={s}",
+            .{std.fmt.bytesToHex(hash, .lower)},
+        );
+        try status(try self.request("GET", target, 100, tag_body), "302");
+        return self.callback(&self.sign_in.states.items[0].key, 100);
     }
     fn login(self: *Fixture) ![32]u8 {
-        _ = try self.request("GET", "/api/login", 100);
+        _ = try self.request("GET", "/api/login", 100, tag_body);
         return self.sign_in.states.items[self.sign_in.states.items.len - 1].key;
     }
 };
@@ -91,20 +122,20 @@ test "unconfigured login is 503 and tag remains public; auth routes require GET 
     defer f.deinit();
     f.sign_in.config = null;
     for ([_][]const u8{ "/api/login", "/heronin/api/login" }) |path| {
-        const response = try f.request("GET", path, 100);
+        const response = try f.request("GET", path, 100, tag_body);
         try status(response, "503");
         try equal("application/json", header(response, "content-type: "));
         try expect(std.mem.endsWith(u8, response, "{\"error\":\"sign-in not configured\"}"));
-        try status(try f.request("POST", path, 100), "405");
+        try status(try f.request("POST", path, 100, tag_body), "405");
     }
-    try status(try f.request("POST", "/api/tag", 100), "200");
-    try status(try f.request("POST", "/heronin/api/oauth/callback", 100), "405");
+    try status(try f.request("POST", "/api/tag", 100, tag_body), "200");
+    try status(try f.request("POST", "/heronin/api/oauth/callback", 100, tag_body), "405");
 }
 test "login redirects with encoded scope offline consent state and matching S256 challenge" {
     var f: Fixture = .{};
     try f.init();
     defer f.deinit();
-    const response = try f.request("GET", "/heronin/api/login", 100);
+    const response = try f.request("GET", "/heronin/api/login", 100, tag_body);
     try status(response, "302");
     const location = header(response, "location: ");
     const kept = f.sign_in.states.items[0];
@@ -150,8 +181,14 @@ test "unknown expired missing code cancelled and oldest of 17 states are rejecte
     const expired = try f.login();
     try status(try f.callback(&expired, 700), "400");
     const missing = try f.login();
-    try status(try f.request("GET", try std.fmt.allocPrint(f.arena.allocator(), "/api/oauth/callback?state={s}", .{missing}), 100), "400");
-    try status(try f.request("GET", "/heronin/api/oauth/callback?error=access_denied", 100), "403");
+    const target = try std.fmt.allocPrint(
+        f.arena.allocator(),
+        "/api/oauth/callback?state={s}",
+        .{missing},
+    );
+    try status(try f.request("GET", target, 100, tag_body), "400");
+    const cancelled = "/heronin/api/oauth/callback?error=access_denied";
+    try status(try f.request("GET", cancelled, 100, tag_body), "403");
     const oldest = try f.login();
     for (0..16) |_| {
         _ = try f.login();
@@ -197,11 +234,11 @@ test "guard persistence token refresh errors and logout lifecycle" {
     var f: Fixture = .{};
     try f.init();
     defer f.deinit();
-    try status(try f.request("POST", "/api/tag", 100), "401");
+    try status(try f.request("POST", "/api/tag", 100, tag_body), "401");
     try std.testing.expectEqual(@as(usize, 0), f.tags);
     const first = try f.callback(&(try f.login()), 100);
     f.cookie = header(first, "set-cookie: ");
-    try status(try f.request("POST", "/api/tag", 100), "200");
+    try status(try f.request("POST", "/api/tag", 100, tag_body), "200");
     var loaded: auth.Auth = .{ .gpa = a, .io = io, .data = f.sign_in.data, .google = f.sign_in.google, .random = f.random.random() };
     defer loaded.deinit();
     try loaded.load(f.arena.allocator(), 101);
@@ -210,44 +247,44 @@ test "guard persistence token refresh errors and logout lifecycle" {
     try expect(std.mem.indexOf(u8, disk, f.cookie[16..80]) == null);
     if (@import("builtin").os.tag != .windows) try std.testing.expectEqual(@as(u32, 0o600), (try f.tmp.dir.statFile(io, "sessions", .{})).permissions.toMode() & 0o777);
     f.cookie = try std.fmt.allocPrint(f.arena.allocator(), "heronin_session=zz; {s}", .{f.cookie});
-    const token = try f.request("GET", "/heronin/api/token", 100);
+    const token = try f.request("GET", "/heronin/api/token", 100, tag_body);
     try status(token, "200");
     try equal("no-store", header(token, "cache-control: "));
-    try status(try f.request("GET", "/api/token", 200), "200");
+    try status(try f.request("GET", "/api/token", 200, tag_body), "200");
     try std.testing.expectEqual(@as(usize, 1), f.refreshes);
-    try status(try f.request("GET", "/api/token", 3600), "200");
+    try status(try f.request("GET", "/api/token", 3600, tag_body), "200");
     try std.testing.expectEqual(@as(usize, 2), f.refreshes);
     f.trouble = .unavailable;
-    try status(try f.request("GET", "/api/token", 7100), "502");
+    try status(try f.request("GET", "/api/token", 7100, tag_body), "502");
     const token_path = "tokens/" ++ std.fmt.bytesToHex(blk: {
         var hash: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash("bird@example.invalid", &hash, .{});
         break :blk hash;
     }, .lower);
     f.trouble = .invalid;
-    try status(try f.request("GET", "/api/token", 7100), "401");
-    try status(try f.request("GET", "/api/token", 7100), "401");
+    try status(try f.request("GET", "/api/token", 7100, tag_body), "401");
+    try status(try f.request("GET", "/api/token", 7100, tag_body), "401");
     try std.testing.expectError(error.FileNotFound, f.tmp.dir.openFile(io, token_path, .{}));
     const second = try f.callback(&(try f.login()), 100);
     f.sign_in.gpa.free(f.sign_in.sessions.items[1].email);
     f.sign_in.sessions.items[1].email = try a.dupe(u8, "bird@example.invalid");
     f.trouble = .none;
-    try status(try f.request("GET", "/api/logout", 100), "405");
-    const logout = try f.request("POST", "/api/logout", 100);
+    try status(try f.request("GET", "/api/logout", 100, tag_body), "405");
+    const logout = try f.request("POST", "/api/logout", 100, tag_body);
     try status(logout, "204");
     try expect(std.mem.indexOf(u8, logout, "Max-Age=0") != null);
     try std.testing.expectEqual(@as(usize, 0), f.revokes);
     try equal("refresh", try f.tmp.dir.readFileAlloc(io, token_path, f.arena.allocator(), .limited(100)));
-    try status(try f.request("GET", "/api/token", 100), "401");
+    try status(try f.request("GET", "/api/token", 100, tag_body), "401");
     f.cookie = header(second, "set-cookie: ");
-    try status(try f.request("GET", "/api/token", 100), "200");
+    try status(try f.request("GET", "/api/token", 100, tag_body), "200");
     f.trouble = .revoke;
-    try status(try f.request("POST", "/heronin/api/logout", 100), "204");
+    try status(try f.request("POST", "/heronin/api/logout", 100, tag_body), "204");
     try std.testing.expectEqual(@as(usize, 1), f.revokes);
     try std.testing.expectError(error.FileNotFound, f.tmp.dir.openFile(io, token_path, .{}));
     f.cookie = header(try f.callback(&(try f.login()), 100), "set-cookie: ");
     f.trouble = .none;
-    try status(try f.request("POST", "/api/logout", 100), "204");
+    try status(try f.request("POST", "/api/logout", 100, tag_body), "204");
     try std.testing.expectEqual(@as(usize, 2), f.revokes);
 }
 test "load drops expired broken and earliest of 33 sessions" {
@@ -269,4 +306,65 @@ test "load drops expired broken and earliest of 33 sessions" {
     for (f.sign_in.sessions.items) |s| try expect(s.expires >= 201);
     const saved = try f.tmp.dir.readFileAlloc(io, "sessions", f.arena.allocator(), .limited(65536));
     try expect(std.mem.indexOf(u8, saved, "broken") == null);
+}
+
+const app_verifier = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+test "app callback claims once and its session passes the gate" {
+    var f: Fixture = .{};
+    try f.init();
+    defer f.deinit();
+    const response = try f.appLogin(app_verifier);
+    try status(response, "200");
+    try expect(std.mem.indexOf(u8, response, "Go back to Heronin") != null);
+    try expect(std.mem.indexOf(u8, response, "set-cookie") == null);
+    try expect(std.mem.indexOf(u8, response, "location:") == null);
+    try equal("text/html; charset=utf-8", header(response, "content-type: "));
+    try status(try f.claim("another verifier", 100), "404");
+    const claimed = try f.claim(app_verifier, 100);
+    try status(claimed, "200");
+    const start = std.mem.indexOf(u8, claimed, "{\"session\":").?;
+    const parsed = try std.json.parseFromSlice(
+        struct { session: []const u8 },
+        a,
+        claimed[start..],
+        .{},
+    );
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 64), parsed.value.session.len);
+    var raw: [32]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&raw, parsed.value.session);
+    f.cookie = try std.fmt.allocPrint(
+        f.arena.allocator(),
+        "heronin_session={s}",
+        .{parsed.value.session},
+    );
+    try status(try f.request("GET", "/api/token", 100, tag_body), "200");
+    try status(try f.claim(app_verifier, 100), "404");
+}
+test "app handoffs expire and reject future timestamps" {
+    var f: Fixture = .{};
+    try f.init();
+    defer f.deinit();
+    _ = try f.appLogin(app_verifier);
+    try status(try f.claim(app_verifier, 400), "404");
+    _ = try f.appLogin(app_verifier);
+    try status(try f.claim(app_verifier, std.math.minInt(i64)), "404");
+    _ = try f.appLogin(app_verifier);
+    try status(try f.claim(app_verifier, std.math.maxInt(i64)), "404");
+}
+test "bad app creates no state and fifth handoff drops first" {
+    var f: Fixture = .{};
+    try f.init();
+    defer f.deinit();
+    const non_hex = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+    for ([_][]const u8{ app_verifier[0..63], non_hex }) |app| {
+        const target = try std.fmt.allocPrint(f.arena.allocator(), "/api/login?app={s}", .{app});
+        try status(try f.request("GET", target, 100, tag_body), "400");
+        try std.testing.expectEqual(@as(usize, 0), f.sign_in.states.items.len);
+    }
+    for ([_][]const u8{ app_verifier, "b", "c", "d", "e" }) |verifier| {
+        _ = try f.appLogin(verifier);
+    }
+    try status(try f.claim(app_verifier, 100), "404");
+    try status(try f.claim("e", 100), "200");
 }
