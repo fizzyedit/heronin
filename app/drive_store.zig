@@ -26,6 +26,7 @@ pub const DriveStore = struct {
         items: []api.Item = &.{},
         pending: std.ArrayList(api.Item) = .empty,
         failed: bool = false,
+        stale: bool = false,
     },
     const Import = struct {
         s: *DriveStore,
@@ -68,7 +69,11 @@ pub const DriveStore = struct {
             }
         }
         fn answer(o: *Import, stat: vfs.Stat, new: bool) void {
-            o.s.listing.state = .empty;
+            if (o.s.listing.state == .reading) {
+                o.s.listing.stale = true;
+            } else {
+                o.s.listing.state = .empty;
+            }
             end(o, .{ .new = new, .photo = .{
                 .id = o.id,
                 .name = std.fs.path.basename(o.id),
@@ -216,6 +221,10 @@ pub const DriveStore = struct {
         const copy = if (after) |s| self.gpa.dupe(u8, s) catch @panic("OOM") else null;
         self.queue(ctx, .{ .list = .{ .done = done, .after = copy, .limit = limit } });
         if (self.listing.state != .empty) return;
+        self.readListing();
+    }
+    fn readListing(self: *DriveStore) void {
+        self.listing.stale = false;
         self.listing.state = .reading;
         self.listing.failed = false;
         _ = self.listing.arenas[self.listing.live ^ 1].reset(.retain_capacity);
@@ -281,6 +290,7 @@ pub const DriveStore = struct {
     fn finish(self: *DriveStore) void {
         self.listing.left -= 1;
         if (self.listing.left != 0) return;
+        if (self.listing.stale) return self.readListing();
         self.listing.items = self.listing.pending.items;
         std.mem.sort(api.Item, self.listing.items, {}, less);
         self.listing.live ^= 1;

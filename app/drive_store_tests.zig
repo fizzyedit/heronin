@@ -277,3 +277,27 @@ test "unrepresentable clock years answer Io without integer traps" {
         try t.expectError(error.Io, imported.result);
     }
 }
+test "import during listing safely refreshes lists queued from its callback" {
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try seed(&mem);
+    var drive = try DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock);
+    defer drive.deinit();
+    const Callback = struct {
+        store: api.Store,
+        list: List = .{},
+        fn done(ctx: ?*anyopaque, _: api.Error!api.Imported) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            self.store.list(null, 10, &self.list, List.done);
+        }
+    };
+    var callback: Callback = .{ .store = drive.store() };
+    callback.store.importFile("IMG_0004.jpg", "bytes", &callback, Callback.done);
+    for (0..2) |_| callback.store.pump();
+    callback.store.list(null, 10, &callback.list, List.done);
+    for (0..2) |_| callback.store.pump();
+    try t.expectEqual(0, callback.list.calls);
+    for (0..2) |_| callback.store.pump();
+    try t.expectEqual(2, callback.list.calls);
+    try t.expectEqualStrings("2025/IMG_0004.jpg", (try callback.list.result)[1].photo.id);
+}
