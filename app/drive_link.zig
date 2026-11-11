@@ -25,7 +25,8 @@ pub const Link = struct {
     pub fn give(self: *Link, host: *sdk.Host, token: []const u8, expires_in: u32) void {
         self.host = host;
         const a = host.allocator;
-        var args: std.Io.Writer.Allocating = .init(a);
+        const capacity = std.math.add(usize, std.math.mul(usize, token.len, 6) catch return, 64) catch return;
+        var args = std.Io.Writer.Allocating.initCapacity(a, capacity) catch return;
         defer args.deinit();
         defer std.crypto.secureZero(u8, args.written());
         std.zon.stringify.serialize(.{ .access_token = token, .expires_in = expires_in }, .{}, &args.writer) catch return;
@@ -36,7 +37,7 @@ pub const Link = struct {
             .unknown => self.drop(),
             .failed => |message| self.retry = std.mem.eql(u8, message, "drive is not ready yet"),
             .ok => if (token.len == 0) self.drop() else {
-                self.state = .waiting;
+                if (self.state != .mounted) self.state = .waiting;
             },
             else => {},
         }

@@ -81,6 +81,14 @@ test "absent drive falls back; command mount lists photos, signs out and retains
     store.pump();
     store.pump();
     try t.expect(listed);
+    link.changed = false;
+    link.give(&host, "tok-1", 3600);
+    try t.expectEqual(.mounted, link.state);
+    try t.expectEqual(store.ptr, link.current(fake.store()).ptr);
+    link.step();
+    try t.expectEqual(store.ptr, link.current(fake.store()).ptr);
+    try t.expectEqual(1, link.retired.items.len);
+    try t.expect(!link.changed);
     link.give(&host, "", 0);
     try t.expectEqual(.absent, link.state);
     try t.expectEqual(fake.store().ptr, link.current(fake.store()).ptr);
