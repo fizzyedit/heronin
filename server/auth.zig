@@ -1,10 +1,11 @@
 const std = @import("std");
 const google = @import("google.zig");
 pub const Config = struct { id: []const u8, secret: []const u8, public_url: []const u8, allow: []const []const u8 };
-const State = struct { key: [32]u8, verifier: [43]u8, made_at: i64 };
-pub const Action = enum { login, callback, token, logout };
+const State = struct { key: [32]u8, verifier: [43]u8, made_at: i64, app: ?[32]u8 = null };
+pub const Action = enum { login, callback, token, logout, app_session };
 const Cached = struct { key: [32]u8, token: []const u8, expires: i64 };
 const Session = struct { hash: [32]u8, email: []const u8, expires: i64 };
+const Handoff = struct { app: [32]u8, raw: [32]u8, made_at: i64 };
 pub const Auth = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -12,6 +13,7 @@ pub const Auth = struct {
     config: ?Config = null,
     google: google.Google,
     random: std.Random,
+    handoffs: std.ArrayList(Handoff) = .empty,
     states: std.ArrayList(State) = .empty,
     sessions: std.ArrayList(Session) = .empty,
     cache: std.ArrayList(Cached) = .empty,
@@ -19,6 +21,7 @@ pub const Auth = struct {
         for (self.sessions.items) |s| self.gpa.free(s.email);
         self.sessions.deinit(self.gpa);
         self.states.deinit(self.gpa);
+        self.handoffs.deinit(self.gpa);
         for (self.cache.items) |c| self.gpa.free(c.token);
         self.cache.deinit(self.gpa);
     }
@@ -38,8 +41,20 @@ pub const Auth = struct {
     pub fn handle(self: *Auth, r: *std.http.Server.Request, a: std.mem.Allocator, now: i64, action: Action) !void {
         const c = self.config orelse return r.respond("{\"error\":\"sign-in not configured\"}", .{ .status = .service_unavailable, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
         if (action == .token or action == .logout) return self.credentials(r, a, now, action);
+        if (action == .app_session) return self.claim(r, a, now);
         const redirect = try std.fmt.allocPrint(a, "{s}/api/oauth/callback", .{c.public_url});
         if (action == .login) {
+            var app: ?[32]u8 = null;
+            const target = r.head.target;
+            const start = if (std.mem.indexOfScalar(u8, target, '?')) |i| i + 1 else target.len;
+            var parts = std.mem.splitScalar(u8, target[start..], '&');
+            while (parts.next()) |part| if (std.mem.startsWith(u8, part, "app=")) {
+                var hash: [32]u8 = undefined;
+                if (part.len != 68) return failure(r, .bad_request, "bad app");
+                _ = std.fmt.hexToBytes(&hash, part[4..]) catch
+                    return failure(r, .bad_request, "bad app");
+                app = hash;
+            };
             var raw: [32]u8 = undefined;
             self.random.bytes(raw[0..16]);
             const key = std.fmt.bytesToHex(raw[0..16].*, .lower);
@@ -47,7 +62,12 @@ pub const Auth = struct {
             var verifier: [43]u8 = undefined;
             _ = std.base64.url_safe_no_pad.Encoder.encode(&verifier, &raw);
             if (self.states.items.len == 16) _ = self.states.orderedRemove(0);
-            try self.states.append(self.gpa, .{ .key = key, .verifier = verifier, .made_at = now });
+            try self.states.append(self.gpa, .{
+                .key = key,
+                .verifier = verifier,
+                .made_at = now,
+                .app = app,
+            });
             const challenge = digest(&verifier);
             var encoded: [43]u8 = undefined;
             const query = try google.formBody(a, &.{ .{ "client_id", c.id }, .{ "redirect_uri", redirect }, .{ "response_type", "code" }, .{ "scope", "openid email https://www.googleapis.com/auth/drive" }, .{ "access_type", "offline" }, .{ "prompt", "consent" }, .{ "state", &key }, .{ "code_challenge", std.base64.url_safe_no_pad.Encoder.encode(&encoded, &challenge) }, .{ "code_challenge_method", "S256" } });
@@ -95,8 +115,44 @@ pub const Auth = struct {
         if (self.sessions.items.len == 32) self.gpa.free(self.sessions.orderedRemove(0).email);
         self.sessions.appendAssumeCapacity(.{ .hash = digest(&raw), .email = owned, .expires = now + 2592000 });
         try self.save(a);
+        if (s.app) |app| {
+            if (self.handoffs.items.len == 4) _ = self.handoffs.orderedRemove(0);
+            try self.handoffs.append(self.gpa, .{ .app = app, .raw = raw, .made_at = now });
+            return r.respond(
+                "<!doctype html><title>Heronin</title><p>Signed in. Go back to Heronin.</p>",
+                .{ .extra_headers = &.{.{
+                    .name = "content-type",
+                    .value = "text/html; charset=utf-8",
+                }}, .keep_alive = false },
+            );
+        }
         std.log.info("sign-in ok", .{});
         try r.respond("", .{ .status = .found, .keep_alive = false, .extra_headers = &.{ .{ .name = "location", .value = try std.fmt.allocPrint(a, "{s}/oauth-callback.html?signed_in=1", .{c.public_url}) }, .{ .name = "set-cookie", .value = try std.fmt.allocPrint(a, "heronin_session={s}; HttpOnly; Secure; SameSite=Lax; Path=/heronin/; Max-Age=2592000", .{std.fmt.bytesToHex(raw, .lower)}) } } });
+    }
+    fn claim(self: *Auth, r: *std.http.Server.Request, a: std.mem.Allocator, now: i64) !void {
+        const reader = try r.readerExpectContinue(&.{});
+        const body = reader.allocRemaining(a, .limited(256)) catch
+            return json(r, .bad_request, "{\"error\":\"invalid request\"}");
+        defer a.free(body);
+        const Input = struct { verifier: []const u8 };
+        const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+        const parsed = std.json.parseFromSlice(Input, a, body, options) catch
+            return json(r, .bad_request, "{\"error\":\"invalid request\"}");
+        defer parsed.deinit();
+        const hash = digest(parsed.value.verifier);
+        var i: usize = 0;
+        while (i < self.handoffs.items.len) {
+            const h = self.handoffs.items[i];
+            if (now < h.made_at or @as(i128, now) - h.made_at >= 300) {
+                _ = self.handoffs.orderedRemove(i);
+            } else i += 1;
+        }
+        for (self.handoffs.items, 0..) |h, index| if (std.mem.eql(u8, &h.app, &hash)) {
+            _ = self.handoffs.orderedRemove(index);
+            const reply = .{ .session = std.fmt.bytesToHex(h.raw, .lower) };
+            return json(r, .ok, try std.json.Stringify.valueAlloc(a, reply, .{}));
+        };
+        return json(r, .not_found, "{\"error\":\"not yet\"}");
     }
     fn save(self: *Auth, a: std.mem.Allocator) !void {
         var out: std.Io.Writer.Allocating = .init(a);

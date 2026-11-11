@@ -15,10 +15,19 @@ const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
 }
-const Route = enum { tag, place, login, callback, token, logout, agent };
+const Route = enum { tag, place, login, callback, token, logout, agent, app_session };
 fn route(target: []const u8) ?Route {
     const path = if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target;
-    const paths = std.StaticStringMap(Route).initComptime(.{ .{ "/api/tag", .tag }, .{ "/api/place", .place }, .{ "/api/login", .login }, .{ "/api/oauth/callback", .callback }, .{ "/api/token", .token }, .{ "/api/logout", .logout }, .{ "/api/agent", .agent } });
+    const paths = std.StaticStringMap(Route).initComptime(.{
+        .{ "/api/app-session", .app_session },
+        .{ "/api/tag", .tag },
+        .{ "/api/place", .place },
+        .{ "/api/login", .login },
+        .{ "/api/oauth/callback", .callback },
+        .{ "/api/token", .token },
+        .{ "/api/logout", .logout },
+        .{ "/api/agent", .agent },
+    });
     return paths.get(path[0 .. std.mem.indexOfScalar(u8, path, '?') orelse path.len]);
 }
 pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer) !void {
@@ -29,7 +38,7 @@ pub fn handleAuth(request: *std.http.Server.Request, allocator: std.mem.Allocato
 }
 pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, connected: ?wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth, stored: ?*yours_file.Yours) !void {
     const matched = route(request.head.target) orelse return respond(request, .not_found, "{\"error\":\"not found\"}");
-    const post = matched == .tag or matched == .logout;
+    const post = matched == .tag or matched == .logout or matched == .app_session;
     if (request.head.method != (if (post) std.http.Method.POST else .GET) and !(matched == .agent and request.head.method == .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched == .agent) "GET, POST" else if (post) "POST" else "GET" }, .{ .name = "content-type", .value = "application/json" } } });
     if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout or matched == .agent)) {
         var headers = request.iterateHeaders();
@@ -40,9 +49,12 @@ pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, ta
         if (configured.session(cookie, now) == null) return respond(request, .unauthorized, "{\"error\":\"sign in\"}");
     };
     if (request.head.content_length orelse 0 > cap) return respond(request, .payload_too_large, "{\"error\":\"body too large\"}");
-    if (matched == .login or matched == .callback or matched == .token or matched == .logout) {
+    if (matched == .login or matched == .callback or matched == .token or
+        matched == .logout or matched == .app_session)
+    {
         const configured = sign_in orelse return respond(request, .service_unavailable, "{\"error\":\"sign-in not configured\"}");
         return configured.handle(request, allocator, now, switch (matched) {
+            .app_session => .app_session,
             .login => .login,
             .callback => .callback,
             .token => .token,
