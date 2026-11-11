@@ -88,7 +88,9 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     tagging.tags_allocator = state.arena.allocator();
     tagging.items = state.items;
     tagging.photos = state.photos;
-    if (sign_in.ready() and drive_link.link.state != .mounted and !reloaded) tagging.step(drive_link.link.current(fake.?.store()), agent.post);
+    if (sign_in.ready() and !reloaded) {
+        tagging.step(drive_link.link.current(fake.?.store()), agent.post);
+    }
     if (sign_in.ready()) library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
     if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);

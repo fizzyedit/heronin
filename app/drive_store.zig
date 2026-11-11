@@ -3,13 +3,51 @@ const vfs = @import("core").vfs;
 const m = @import("model");
 const api = @import("store.zig");
 const Done = api.Done;
+const props = @import("drive_props.zig");
 const Items = []const api.Item;
 const Places = []const m.Place;
 const P = *anyopaque;
 const C = ?*anyopaque;
 pub const Clock = *const fn () i64;
+pub const Info = struct {
+    md5: [16]u8 = @splat(0),
+    taken_ms: i64 = 0,
+    lat: ?f64 = null,
+    lon: ?f64 = null,
+    camera: []const u8 = "",
+    w: u32 = 0,
+    h: u32 = 0,
+    props: []const u8 = "{}",
+};
+pub const Meta = struct {
+    ctx: *anyopaque,
+    info: *const fn (*anyopaque, std.mem.Allocator, []const u8) ?Info,
+    thumbnail: *const fn (*anyopaque, []const u8, u32, *Pending) void,
+    setProps: *const fn (*anyopaque, []const u8, []const u8, *Pending) void,
+};
+pub const Pending = struct {
+    store: *DriveStore,
+    arena: std.heap.ArenaAllocator = undefined,
+    ctx: C,
+    done: union(enum) { thumbnail: Done(api.Thumbnail), props: Done(void) },
+    wash: u8 = 0,
+    result: api.Error![]u8 = error.Io,
+    pub fn answer(p: *Pending, result: ?[]const u8) void {
+        p.result = if (result) |b| p.store.gpa.dupe(u8, b) catch @panic("OOM") else error.Io;
+        p.store.queue(p.ctx, .{ .meta = p });
+    }
+    pub fn unsupported(p: *Pending) void {
+        p.result = error.Unsupported;
+        p.store.queue(p.ctx, .{ .meta = p });
+    }
+    fn free(p: *Pending) void {
+        if (p.result) |b| p.store.gpa.free(b) else |_| {}
+        p.store.gpa.destroy(p);
+    }
+};
 pub const DriveStore = struct {
     clock: Clock,
+    meta: ?Meta,
     places_ms: ?i64 = null,
     importing: ?*Import = null,
     imports: std.ArrayList(*Import) = .empty,
@@ -37,6 +75,7 @@ pub const DriveStore = struct {
         state: enum { make_root, make_year, probe, write } = .make_root,
         name: []const u8 = "",
         bytes: []const u8 = "",
+        md5: [16]u8 = undefined,
         dir: []const u8 = "",
         id: []const u8 = "",
         path: []const u8 = "",
@@ -76,11 +115,7 @@ pub const DriveStore = struct {
             o.done(o.ctx, result);
         }
         fn answer(o: *Import, stat: vfs.Stat, new: bool) void {
-            if (o.s.listing.state == .reading) {
-                o.s.listing.stale = true;
-            } else {
-                o.s.listing.state = .empty;
-            }
+            o.s.invalidate();
             end(o, .{ .new = new, .photo = .{
                 .id = o.id,
                 .name = std.fs.path.basename(o.id),
@@ -88,7 +123,7 @@ pub const DriveStore = struct {
                 .taken_at = if (stat.modified_ms > 0) @divFloor(stat.modified_ms, 1000) else null,
                 .w = 4,
                 .h = 3,
-                .md5 = .{ .bytes = @splat(0) },
+                .md5 = .{ .bytes = o.md5 },
             } });
         }
         fn wrote(ctx: C, result: vfs.Result(void)) void {
@@ -109,8 +144,14 @@ pub const DriveStore = struct {
             const o: *Import = @ptrCast(@alignCast(ctx.?));
             o.job = null;
             if (result.get()) |stat| {
-                if (stat.kind == .file and stat.size == o.bytes.len and o.number == 1)
-                    return o.answer(stat, false);
+                var same = stat.kind == .file and stat.size == o.bytes.len and o.number == 1;
+                if (same) if (o.s.meta) |meta| {
+                    if (meta.info(meta.ctx, o.arena.allocator(), o.path)) |info| {
+                        if (!std.mem.allEqual(u8, &info.md5, 0))
+                            same = std.mem.eql(u8, &info.md5, &o.md5);
+                    }
+                };
+                if (same) return o.answer(stat, false);
                 o.number = std.math.add(u64, o.number, 1) catch return end(o, error.Io);
             } else |err| {
                 if (err != error.NotFound) return end(o, error.Io);
@@ -194,12 +235,13 @@ pub const DriveStore = struct {
             list: struct { done: Done(Items), after: ?[]u8, limit: u32 },
             wash: struct { done: Done(api.Thumbnail), value: u8 },
             refused_void: Done(void),
+            meta: *Pending,
         },
     };
-    pub fn init(gpa: std.mem.Allocator, fs: vfs.Fs, root: []const u8, clock: Clock) !DriveStore {
-        const l: @FieldType(DriveStore, "listing") = .{ .arenas = .{ .init(gpa), .init(gpa) } };
-        const copy = try gpa.dupe(u8, root);
-        return .{ .gpa = gpa, .fs = fs, .root = copy, .listing = l, .clock = clock };
+    pub fn init(a: std.mem.Allocator, fs: vfs.Fs, r: []const u8, c: Clock, mt: ?Meta) !DriveStore {
+        const l: @FieldType(DriveStore, "listing") = .{ .arenas = .{ .init(a), .init(a) } };
+        const copy = try a.dupe(u8, r);
+        return .{ .gpa = a, .fs = fs, .root = copy, .listing = l, .clock = c, .meta = mt };
     }
     /// Cancels pending jobs so no callback runs after deinit.
     pub fn deinit(self: *DriveStore) void {
@@ -208,6 +250,7 @@ pub const DriveStore = struct {
             for (self.listing.jobs.items) |job| self.fs.cancel(job);
         }
         for (self.answers.items) |answer| {
+            if (answer.reply == .meta) answer.reply.meta.free();
             if (answer.reply == .list) self.gpa.free(answer.reply.list.after orelse continue);
         }
         self.answers.deinit(self.gpa);
@@ -292,7 +335,7 @@ pub const DriveStore = struct {
             } else continue;
             const id = if (d.len == 0) entry.name else try vfs.path.join(s.arena(), d, entry.name);
             const at = if (entry.modified_ms > 0) @divFloor(entry.modified_ms, 1000) else null;
-            try s.listing.pending.append(s.arena(), .{ .photo = .{
+            var item: api.Item = .{ .photo = .{
                 .id = id,
                 .name = id[id.len - entry.name.len ..],
                 .bytes = entry.size,
@@ -300,7 +343,26 @@ pub const DriveStore = struct {
                 .w = 4,
                 .h = 3,
                 .md5 = .{ .bytes = @splat(0) },
-            }, .tags = &.{} });
+            }, .tags = &.{} };
+            if (s.meta) |meta| {
+                const path = try vfs.path.join(s.arena(), s.root, id);
+                if (meta.info(meta.ctx, s.arena(), path)) |info| {
+                    item.photo.md5.bytes = info.md5;
+                    if (info.taken_ms > 0) item.photo.taken_at = @divFloor(info.taken_ms, 1000);
+                    if (info.lat != null and info.lon != null)
+                        item.photo.place = .{ .lat = info.lat.?, .lon = info.lon.? };
+                    item.photo.camera = info.camera;
+                    if (info.w > 0 and info.h > 0) {
+                        item.photo.w = info.w;
+                        item.photo.h = info.h;
+                    }
+                    const decoded = props.decode(s.arena(), info.props);
+                    item.tags = decoded.tags;
+                    if (decoded.state) |state| item.photo.state = state;
+                    item.photo.favorite = decoded.favorite;
+                }
+            }
+            try s.listing.pending.append(s.arena(), item);
         }
     }
     fn less(_: void, a: api.Item, b: api.Item) bool {
@@ -317,9 +379,17 @@ pub const DriveStore = struct {
         self.listing.live ^= 1;
         self.listing.state = .ready;
     }
-    fn thumbnail(ptr: P, id: []const u8, _: u32, ctx: C, done: Done(api.Thumbnail)) void {
+    fn thumbnail(ptr: P, id: []const u8, px: u32, ctx: C, done: Done(api.Thumbnail)) void {
         const value = @as(u8, @truncate(std.hash.Wyhash.hash(0, id))) % 6;
-        cast(ptr).queue(ctx, .{ .wash = .{ .done = done, .value = value } });
+        const s = cast(ptr);
+        if (s.meta) |meta| {
+            const p = s.gpa.create(Pending) catch @panic("OOM");
+            p.* = .{ .store = s, .ctx = ctx, .done = .{ .thumbnail = done }, .wash = value };
+            const path = vfs.path.join(s.gpa, s.root, id) catch @panic("OOM");
+            defer s.gpa.free(path);
+            return meta.thumbnail(meta.ctx, path, px, p);
+        }
+        s.queue(ctx, .{ .wash = .{ .done = done, .value = value } });
     }
     fn importFile(p: P, name: []const u8, bytes: []const u8, c: C, d: Done(api.Imported)) void {
         const s = cast(p);
@@ -329,17 +399,33 @@ pub const DriveStore = struct {
         const a = o.arena.allocator();
         o.name = a.dupe(u8, name) catch @panic("OOM");
         o.bytes = a.dupe(u8, bytes) catch @panic("OOM");
+        std.crypto.hash.Md5.hash(bytes, &o.md5, .{});
         s.imports.append(s.gpa, o) catch @panic("OOM");
         s.importing = o;
         o.start() catch {
             o.failed = true;
         };
     }
-    fn setTags(p: P, _: []const u8, _: []const m.Tag, _: m.Photo.State, c: C, d: Done(void)) void {
-        cast(p).queue(c, .{ .refused_void = d });
+    fn invalidate(s: *DriveStore) void {
+        s.listing.stale = s.listing.state == .reading;
+        if (!s.listing.stale) s.listing.state = .empty;
     }
-    fn setFavorite(ptr: P, _: []const u8, _: bool, ctx: C, done: Done(void)) void {
-        cast(ptr).queue(ctx, .{ .refused_void = done });
+    fn setTags(p: P, id: []const u8, t: []const m.Tag, v: m.Photo.State, c: C, d: Done(void)) void {
+        const s = cast(p);
+        const text = props.encodeTags(s.gpa, t, v) catch @panic("OOM");
+        defer s.gpa.free(text);
+        s.setProps(id, text, c, d);
+    }
+    fn setFavorite(p: P, id: []const u8, on: bool, c: C, d: Done(void)) void {
+        cast(p).setProps(id, props.encodeFavorite(on), c, d);
+    }
+    fn setProps(s: *DriveStore, id: []const u8, text: []const u8, c: C, d: Done(void)) void {
+        const meta = s.meta orelse return s.queue(c, .{ .refused_void = d });
+        const p = s.gpa.create(Pending) catch @panic("OOM");
+        p.* = .{ .store = s, .ctx = c, .done = .{ .props = d } };
+        const path = vfs.path.join(s.gpa, s.root, id) catch @panic("OOM");
+        defer s.gpa.free(path);
+        meta.setProps(meta.ctx, path, text, p);
     }
     fn places(ptr: P, ctx: C, done: Done(Places)) void {
         placesOp(ptr, null, ctx, done);
@@ -413,6 +499,21 @@ pub const DriveStore = struct {
                 a.done(answer.ctx, if (failed) error.Io else self.page(a.after, a.limit));
             },
             .wash => |a| a.done(answer.ctx, .{ .wash = a.value }),
+            .meta => |p| {
+                defer p.free();
+                switch (p.done) {
+                    .thumbnail => |done| {
+                        const bytes = p.result catch null;
+                        done(p.ctx, if (bytes) |b| .{ .encoded = b } else .{ .wash = p.wash });
+                    },
+                    .props => |done| {
+                        if (p.result) |_| {
+                            self.invalidate();
+                            done(p.ctx, {});
+                        } else |err| done(p.ctx, err);
+                    },
+                }
+            },
             .refused_void => |done| done(answer.ctx, error.Unsupported),
         };
     }

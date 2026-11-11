@@ -2,16 +2,23 @@ const std = @import("std");
 const vfs = @import("core").vfs;
 const api = @import("store.zig");
 const model = @import("model");
-const DriveStore = @import("drive_store.zig").DriveStore;
+const DriveStore = struct {
+    fn init(a: std.mem.Allocator, fs: vfs.Fs, root: []const u8, c: ds.Clock) !ds.DriveStore {
+        return ds.DriveStore.init(a, fs, root, c, null);
+    }
+};
 const t = std.testing;
-fn Sink(comptime T: type) type {
+pub fn Sink(comptime T: type) type {
     return struct {
         calls: usize = 0,
         result: api.Error!T = error.Io,
-        fn done(ctx: ?*anyopaque, result: api.Error!T) void {
+        pub fn done(ctx: ?*anyopaque, result: api.Error!T) void {
             const self: *@This() = @ptrCast(@alignCast(ctx.?));
             self.calls += 1;
             self.result = result;
+            if (T == api.Thumbnail) if (result catch return == .encoded) {
+                t.expectEqualStrings("hi", (result catch unreachable).encoded) catch unreachable;
+            };
         }
     };
 }
@@ -157,7 +164,7 @@ test "answers queued during delivery wait until next pump" {
     const Callback = struct {
         var calls: usize = 0;
         fn done(ctx: ?*anyopaque, _: api.Error!api.Thumbnail) void {
-            const d: *DriveStore = @ptrCast(@alignCast(ctx.?));
+            const d: *ds.DriveStore = @ptrCast(@alignCast(ctx.?));
             d.store().list(null, 1, null, ignore);
         }
         fn ignore(_: ?*anyopaque, _: api.Error![]const api.Item) void {
@@ -356,4 +363,133 @@ test "a places file deleted during a conflicting save is written again" {
     store.pump();
     try t.expectEqual(4, places.calls);
     try t.expectEqualDeep(&saved, try places.result);
+}
+const ds = @import("drive_store.zig");
+const props = @import("drive_props.zig");
+const FakeMeta = struct {
+    a: std.mem.Allocator,
+    facts: []const struct { path: []const u8, value: ds.Info },
+    pending: *ds.Pending = undefined,
+    path: []const u8 = "",
+    text: []const u8 = "",
+    fn meta(f: *FakeMeta) ds.Meta {
+        return .{ .ctx = f, .info = info, .thumbnail = thumbnail, .setProps = setProps };
+    }
+    fn info(ctx: *anyopaque, _: std.mem.Allocator, path: []const u8) ?ds.Info {
+        const f: *FakeMeta = @ptrCast(@alignCast(ctx));
+        for (f.facts) |fact| {
+            if (std.mem.eql(u8, path, fact.path)) return fact.value;
+        }
+        return null;
+    }
+    fn thumbnail(ctx: *anyopaque, path: []const u8, _: u32, p: *ds.Pending) void {
+        setProps(ctx, path, "", p);
+    }
+    fn setProps(ctx: *anyopaque, path: []const u8, text: []const u8, p: *ds.Pending) void {
+        const f: *FakeMeta = @ptrCast(@alignCast(ctx));
+        f.pending = p;
+        f.path = f.a.dupe(u8, path) catch unreachable;
+        f.text = f.a.dupe(u8, text) catch unreachable;
+    }
+};
+test "Meta facts, held thumbnails and property writes only answer through pump" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const tags = [_]model.Tag{.{
+        .species = "norcar",
+        .confidence = 0.5,
+        .source = .ours,
+        .accepted = .auto,
+        .at = 0,
+        .model = "test",
+    }};
+    const text = try props.encodeTags(arena.allocator(), &tags, .review);
+    const json = "{s},\"fav\":\"1\"}}";
+    const favorite = try std.fmt.allocPrint(arena.allocator(), json, .{text[0 .. text.len - 1]});
+    var f: FakeMeta = .{ .a = arena.allocator(), .facts = &.{.{
+        .path = "/Heronin/2025/IMG_0001.JPG",
+        .value = .{
+            .md5 = @splat(7),
+            .taken_ms = 123456,
+            .lat = 0.5,
+            .lon = 0.5,
+            .camera = "Test Camera",
+            .w = 800,
+            .h = 600,
+            .props = favorite,
+        },
+    }} };
+    var mem = try vfs.Mem.init(t.allocator);
+    defer mem.deinit();
+    try seed(&mem);
+    var drive = try ds.DriveStore.init(t.allocator, mem.fs(), "/Heronin", clock, f.meta());
+    defer drive.deinit();
+    const store = drive.store();
+    var list: List = .{};
+    store.list(null, 10, &list, List.done);
+    store.pump();
+    try t.expectEqual(0, list.calls);
+    store.pump();
+    const items = try list.result;
+    const photo = items[0].photo;
+    const unknown = items[1].photo;
+    try t.expectEqualDeep(@as([]const model.Tag, &tags), items[0].tags);
+    try t.expect(photo.favorite);
+    try t.expectEqualDeep(f.facts[0].value.md5, items[0].photo.md5.bytes);
+    try t.expectEqual(@as(?i64, 123), items[0].photo.taken_at);
+    try t.expectEqual(0.5, items[0].photo.place.?.lat);
+    try t.expectEqual(0.5, items[0].photo.place.?.lon);
+    try t.expectEqualStrings("Test Camera", items[0].photo.camera.?);
+    try t.expectEqualDeep(.{ 800, 600, .review }, .{ photo.w, photo.h, photo.state });
+    try t.expectEqualDeep(.{ 4, 3, 0 }, .{ unknown.w, unknown.h, items[1].tags.len });
+    try t.expect(std.mem.allEqual(u8, &items[1].photo.md5.bytes, 0));
+    var thumb: Sink(api.Thumbnail) = .{};
+    store.thumbnail("2025/IMG_0001.JPG", 64, &thumb, @TypeOf(thumb).done);
+    store.pump();
+    try t.expectEqual(0, thumb.calls);
+    f.pending.answer("hi");
+    store.pump();
+    try t.expectEqual(1, thumb.calls);
+    try t.expectEqual(.encoded, std.meta.activeTag(try thumb.result));
+    store.thumbnail("2025/IMG_0001.JPG", 64, &thumb, @TypeOf(thumb).done);
+    f.pending.answer(null);
+    store.pump();
+    const wash = @as(u8, @truncate(std.hash.Wyhash.hash(0, "2025/IMG_0001.JPG"))) % 6;
+    try t.expectEqual(wash, (try thumb.result).wash);
+    var edit: Sink(void) = .{};
+    store.setTags("2025/IMG_0001.JPG", &tags, .review, &edit, @TypeOf(edit).done);
+    try t.expectEqualStrings("/Heronin/2025/IMG_0001.JPG", f.path);
+    try t.expectEqualStrings(text, f.text);
+    f.pending.answer("");
+    try t.expectEqual(0, edit.calls);
+    store.pump();
+    try edit.result;
+    store.list(null, 10, &list, List.done);
+    try t.expect(mem.busy());
+    store.setTags("2025/IMG_0001.JPG", &tags, .review, &edit, @TypeOf(edit).done);
+    f.pending.answer(null);
+    store.pump();
+    try t.expectError(error.Io, edit.result);
+    store.setFavorite("2025/IMG_0001.JPG", true, &edit, @TypeOf(edit).done);
+    try t.expectEqualStrings("{\"fav\":\"1\"}", f.text);
+    f.pending.answer("");
+    store.pump();
+    try mem.putDir("/Heronin/2026");
+    try mem.put("/Heronin/2026/a.jpg", "abc");
+    var digest: [16]u8 = undefined;
+    std.crypto.hash.Md5.hash("abc", &digest, .{});
+    f.facts = &.{.{ .path = "/Heronin/2026/a.jpg", .value = .{ .md5 = digest } }};
+    drive.clock = year;
+    var imported: Sink(api.Imported) = .{};
+    drive.store().importFile("a.jpg", "abc", &imported, @TypeOf(imported).done);
+    for (0..3) |_| drive.store().pump();
+    try t.expect(!(try imported.result).new);
+    drive.store().importFile("a.jpg", "xyz", &imported, @TypeOf(imported).done);
+    for (0..5) |_| drive.store().pump();
+    try t.expectEqualStrings("2026/a (2).jpg", (try imported.result).photo.id);
+    std.crypto.hash.Md5.hash("xyz", &digest, .{});
+    try t.expectEqualDeep(digest, (try imported.result).photo.md5.bytes);
+}
+fn year() i64 {
+    return 1767225600;
 }
