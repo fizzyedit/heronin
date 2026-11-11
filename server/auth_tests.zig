@@ -120,7 +120,7 @@ test "callback stores private refresh token and session survives request arena; 
     const state = try f.login();
     const response = try f.callback(&state, 100);
     try status(response, "302");
-    try equal("https://example.invalid/heronin/", header(response, "location: "));
+    try equal("https://example.invalid/heronin/oauth-callback.html?signed_in=1", header(response, "location: "));
     const cookie = header(response, "set-cookie: ");
     for ([_][]const u8{ "heronin_session=", "HttpOnly", "Secure", "SameSite=Lax", "Path=/heronin/", "Max-Age=2592000" }) |part| try expect(std.mem.indexOf(u8, cookie, part) != null);
     try equal("Bird@Example.invalid", f.sign_in.session(cookie, 101).?);

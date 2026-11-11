@@ -16,6 +16,7 @@ pub fn draw(current: *tabs.Tab, state: *library.State, queue: *imports.Queue, st
     tabs.draw(current);
     var content = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .both });
     defer content.deinit();
+    @import("../sign_in.zig").banner();
     switch (current.*) {
         .library => if (state.open != null) photo.draw(state, store) else library.draw(state),
         .species => species.draw(state, library.now(), current),

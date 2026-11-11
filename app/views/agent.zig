@@ -1,3 +1,4 @@
+const sign_in = @import("../sign_in.zig");
 const std = @import("std");
 const dvui = @import("dvui");
 const core = @import("core");
@@ -7,6 +8,14 @@ const tags = @import("../tag_queue.zig");
 // Keep this displayed value aligned with server/decide.zig default_threshold.
 pub const auto_accept_shown = 85;
 pub fn draw(settings: *tags.Settings) void {
+    if (sign_in.account.state == .signed_in or sign_in.account.state == .signed_out or sign_in.account.state == .opening) {
+        lib.label(@src(), "Account", .{});
+        if (sign_in.account.state == .signed_in) {
+            lib.label(@src(), if (sign_in.account.email) |email| lib.fmt("Signed in as {s}", .{email}) else "Signed in", .{});
+            if (dvui.button(@src(), "Sign out", .{}, .{ .tag = "heronin-sign-out", .min_size_content = .{ .h = 44 } })) sign_in.signOut();
+            if (sign_in.account.failed == .sign_out) lib.label(@src(), "Could not sign out", .{});
+        } else sign_in.button(1);
+    }
     lib.label(@src(), "Tagging agent", .{ .font = dvui.Font.theme(.title) });
     lib.label(@src(), "Who looks at your photos and names the bird.", .{});
     inline for (.{ "Our agent", "Your own agent", "Both, compare" }, .{ "Default", "Connect", "Extra check" }, 0..) |name, hint, i| {
@@ -53,6 +62,7 @@ fn received(ctx: ?*anyopaque, result: core.vfs.Error!core.vfs.http.Response) voi
     job = null;
     const q: *tags.TagQueue = @ptrCast(@alignCast(ctx.?));
     const response = result catch return q.answer(error.Io);
+    if (response.status == 401) sign_in.lost();
     const parsed = if (response.status == 200) std.json.parseFromSlice(tags.wire.Response, q.arena.allocator(), response.body, .{ .allocate = .alloc_always }) else error.Io;
     response.deinit(q.arena.allocator());
     const answer = parsed catch return q.answer(error.Io);

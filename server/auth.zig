@@ -96,7 +96,7 @@ pub const Auth = struct {
         self.sessions.appendAssumeCapacity(.{ .hash = digest(&raw), .email = owned, .expires = now + 2592000 });
         try self.save(a);
         std.log.info("sign-in ok", .{});
-        try r.respond("", .{ .status = .found, .keep_alive = false, .extra_headers = &.{ .{ .name = "location", .value = try std.fmt.allocPrint(a, "{s}/", .{c.public_url}) }, .{ .name = "set-cookie", .value = try std.fmt.allocPrint(a, "heronin_session={s}; HttpOnly; Secure; SameSite=Lax; Path=/heronin/; Max-Age=2592000", .{std.fmt.bytesToHex(raw, .lower)}) } } });
+        try r.respond("", .{ .status = .found, .keep_alive = false, .extra_headers = &.{ .{ .name = "location", .value = try std.fmt.allocPrint(a, "{s}/oauth-callback.html?signed_in=1", .{c.public_url}) }, .{ .name = "set-cookie", .value = try std.fmt.allocPrint(a, "heronin_session={s}; HttpOnly; Secure; SameSite=Lax; Path=/heronin/; Max-Age=2592000", .{std.fmt.bytesToHex(raw, .lower)}) } } });
     }
     fn save(self: *Auth, a: std.mem.Allocator) !void {
         var out: std.Io.Writer.Allocating = .init(a);

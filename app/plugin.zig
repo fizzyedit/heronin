@@ -1,3 +1,4 @@
+const sign_in = @import("sign_in.zig");
 var places_base: ?[]const u8 = if (@import("builtin").cpu.arch == .wasm32) "" else null;
 const sdk = @import("fizzy_sdk");
 const dvui = @import("dvui");
@@ -31,6 +32,7 @@ pub fn register(host: *sdk.Host) !void {
 }
 fn deinit(_: *anyopaque) void {
     library.places_client.names.deinit();
+    sign_in.account.deinit();
     if (fake != null) agent.deinit();
     tagging.deinit();
     if (fake) |*f| f.deinit();
@@ -46,6 +48,7 @@ fn deinit(_: *anyopaque) void {
 fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (fake == null) {
         agent.init();
+        if (@import("builtin").cpu.arch == .wasm32) sign_in.check(agent.transport, places_base orelse "");
         state.tag_queue = &tagging;
         fake = try @import("fake_store.zig").FakeStore.init(@import("std").heap.page_allocator);
         fake.?.store().list(null, 60, &state, library.State.listed);
@@ -55,6 +58,8 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (current != .add) queue.step(fake.?.store());
     if (queue.busy) dvui.refresh(null, @src(), null);
     agent.transport.pump();
+    if (@import("builtin").cpu.arch == .wasm32) @import("core").transport.WebOAuth.pump();
+    if (sign_in.account.state == .checking) dvui.refresh(null, @src(), null);
     fake.?.store().pump();
     var finished: usize = 0;
     for (queue.rows.items) |row| {
@@ -69,8 +74,8 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     tagging.tags_allocator = state.arena.allocator();
     tagging.items = state.items;
     tagging.photos = state.photos;
-    if (!reloaded) tagging.step(fake.?.store(), agent.post);
-    library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
+    if (sign_in.ready() and !reloaded) tagging.step(fake.?.store(), agent.post);
+    if (sign_in.ready()) library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
     if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);
     if (!state.requested and state.items.len > 0) {

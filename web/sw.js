@@ -38,7 +38,7 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin ||
-      !url.pathname.startsWith(ROOT)) return;
+      !url.pathname.startsWith(ROOT) || url.pathname.startsWith(ROOT + 'api/')) return;
   if (event.request.mode === 'navigate' || url.pathname === ROOT ||
       url.pathname === ROOT + 'index.html' || url.pathname === ROOT + 'build.json') {
     event.respondWith(networkFirst(event.request));
