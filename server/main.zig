@@ -4,7 +4,12 @@ const decisions = @import("decide.zig");
 const Fake = @import("fake_tagger.zig").Fake;
 const Gazetteer = @import("place_names.zig").Gazetteer;
 const auth = @import("auth.zig");
-pub const Config = struct { google: ?auth.Config = null, gazetteer: []const u8 = "geonames.txt", port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake" };
+const Claude = @import("claude_tagger.zig").Claude;
+pub const Config = struct { google: ?auth.Config = null, gazetteer: []const u8 = "geonames.txt", port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake", claude: ?Claude.Config = null };
+pub fn checkConfig(config: Config) !void {
+    const claude = std.mem.eql(u8, config.tagger, "claude") and config.claude != null and config.claude.?.key.len > 0;
+    if (!(std.mem.eql(u8, config.tagger, "fake") or claude) or !std.math.isFinite(config.threshold) or config.threshold < 0 or config.threshold > 1) return error.InvalidConfig;
+}
 const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
@@ -90,7 +95,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     if (init.environ_map.get("HERONIN_DATA")) |data| gazetteer = try Gazetteer.load(allocator, init.io, if (std.fs.path.isAbsolute(config.gazetteer)) config.gazetteer else try std.fs.path.join(allocator, &.{ data, config.gazetteer }));
-    if (!std.mem.eql(u8, config.tagger, "fake") or !std.math.isFinite(config.threshold) or config.threshold < 0 or config.threshold > 1) return error.InvalidConfig;
+    try checkConfig(config);
     if (init.environ_map.get("HERONIN_PORT")) |port| config.port = try std.fmt.parseInt(u16, port, 10);
     const address = try std.Io.net.IpAddress.parse("127.0.0.1", config.port);
     var listener = try address.listen(init.io, .{ .reuse_address = true });
@@ -103,6 +108,8 @@ pub fn main(init: std.process.Init) !void {
     defer sign_in.deinit();
     if (config.google != null) try sign_in.load(allocator, std.Io.Clock.real.now(init.io).toSeconds());
     var fake: Fake = .{};
+    var claude: Claude = .{ .io = init.io, .config = config.claude orelse .{ .key = "" } };
+    const tagger = if (std.mem.eql(u8, config.tagger, "claude")) claude.tagger() else fake.tagger();
     while (true) {
         const stream = listener.accept(init.io) catch |err| {
             std.log.warn("accept failed: {s}", .{@errorName(err)});
@@ -117,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
         var writer = stream.writer(init.io, &write_buffer);
         var server = std.http.Server.init(&reader.interface, &writer.interface);
         var request = server.receiveHead() catch continue;
-        handleAuth(&request, arena.allocator(), fake.tagger(), config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in) catch {
+        handleAuth(&request, arena.allocator(), tagger, config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in) catch {
             respond(&request, .internal_server_error, "{\"error\":\"internal\"}") catch {};
         };
     }

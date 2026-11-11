@@ -4,6 +4,9 @@ const wire = @import("tagger.zig");
 const logic = @import("decide.zig");
 const Fake = @import("fake_tagger.zig").Fake;
 const server = @import("main.zig");
+test {
+    _ = @import("claude_tests.zig");
+}
 const expect = std.testing.expect;
 const equal = std.testing.expectEqual;
 const strings = std.testing.expectEqualStrings;
@@ -105,7 +108,9 @@ test "fake exact fixture repeatable unknown and unavailable" {
     fake.fail = true;
     try std.testing.expectError(error.Unavailable, fake.tagger().tag(arena.allocator(), input(0)));
 }
-fn handle(raw: []const u8, fail: bool) ![]u8 {
+var fine: Fake = .{};
+var failing: Fake = .{ .fail = true };
+pub fn handle(raw: []const u8, tagger: wire.Tagger) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     var reader = std.Io.Reader.fixed(raw);
@@ -113,20 +118,19 @@ fn handle(raw: []const u8, fail: bool) ![]u8 {
     defer writer.deinit();
     var http = std.http.Server.init(&reader, &writer.writer);
     var request = try http.receiveHead();
-    var fake: Fake = .{ .fail = fail };
-    try server.handle(&request, arena.allocator(), fake.tagger(), logic.default_threshold, 42, .{});
+    try server.handle(&request, arena.allocator(), tagger, logic.default_threshold, 42, .{});
     return a.dupe(u8, writer.written());
 }
-fn post(path: []const u8, body: []const u8, fail: bool) ![]u8 {
+fn post(path: []const u8, body: []const u8, tagger: wire.Tagger) ![]u8 {
     const raw = try std.fmt.allocPrint(a, "POST {s} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {d}\r\n\r\n{s}", .{ path, body.len, body });
     defer a.free(raw);
-    return handle(raw, fail);
+    return handle(raw, tagger);
 }
 test "HTTP in memory returns Answer JSON both paths manual review bad requests and 502" {
     for ([_][]const u8{ "/api/tag", "/heronin/api/tag" }) |path| {
         const body = try std.json.Stringify.valueAlloc(a, input(0), .{});
         defer a.free(body);
-        const response = try post(path, body, false);
+        const response = try post(path, body, fine.tagger());
         defer a.free(response);
         try expect(std.mem.startsWith(u8, response, "HTTP/1.1 200"));
         const offset = std.mem.indexOf(u8, response, "\r\n\r\n").? + 4;
@@ -136,7 +140,7 @@ test "HTTP in memory returns Answer JSON both paths manual review bad requests a
         try equal(@as(usize, 2), parsed.value.tags.len);
         try strings("grbher3", parsed.value.tags[0].species);
         try equal(@as(i64, 42), parsed.value.tags[0].at);
-        const failed = try post(path, body, true);
+        const failed = try post(path, body, failing.tagger());
         defer a.free(failed);
         try expect(std.mem.startsWith(u8, failed, "HTTP/1.1 502"));
     }
@@ -144,10 +148,10 @@ test "HTTP in memory returns Answer JSON both paths manual review bad requests a
     manual.auto_accept = false;
     const body = try std.json.Stringify.valueAlloc(a, manual, .{});
     defer a.free(body);
-    const response = try post("/api/tag", body, false);
+    const response = try post("/api/tag", body, fine.tagger());
     defer a.free(response);
     try expect(std.mem.indexOf(u8, response, "\"state\":\"review\"") != null);
-    const bad = try post("/api/tag", "{}", false);
+    const bad = try post("/api/tag", "{}", fine.tagger());
     defer a.free(bad);
     try expect(std.mem.startsWith(u8, bad, "HTTP/1.1 400"));
 }
@@ -155,12 +159,12 @@ test "HTTP in memory rejects 3 MiB content length and chunked bodies" {
     const body = try a.alloc(u8, 3 * 1024 * 1024);
     defer a.free(body);
     @memset(body, 'x');
-    const response = try post("/api/tag", body, false);
+    const response = try post("/api/tag", body, fine.tagger());
     defer a.free(response);
     try expect(std.mem.startsWith(u8, response, "HTTP/1.1 413"));
     const raw = try std.fmt.allocPrint(a, "POST /api/tag HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n300000\r\n{s}\r\n0\r\n\r\n", .{body});
     defer a.free(raw);
-    const chunked = try handle(raw, false);
+    const chunked = try handle(raw, fine.tagger());
     defer a.free(chunked);
     try expect(std.mem.startsWith(u8, chunked, "HTTP/1.1 413"));
 }
@@ -173,17 +177,17 @@ test "missing config threshold uses the single default" {
 }
 
 test "HTTP routes by path then method and accepts omitted optional fields" {
-    const get = try handle("GET /api/tag HTTP/1.1\r\nHost: localhost\r\n\r\n", false);
+    const get = try handle("GET /api/tag HTTP/1.1\r\nHost: localhost\r\n\r\n", fine.tagger());
     defer a.free(get);
     try expect(std.mem.startsWith(u8, get, "HTTP/1.1 405"));
     try expect(std.mem.indexOf(u8, get, "allow: POST") != null);
     for ([_][]const u8{ "/api/nope", "/heronin/api/nope" }) |path| {
-        const response = try post(path, "{}", false);
+        const response = try post(path, "{}", fine.tagger());
         defer a.free(response);
         try expect(std.mem.startsWith(u8, response, "HTTP/1.1 404"));
         try expect(std.mem.endsWith(u8, response, "{\"error\":\"not found\"}"));
     }
-    const response = try post("/api/tag", "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"agent\":\"ours\",\"auto_accept\":true}", false);
+    const response = try post("/api/tag", "{\"md5\":\"00000000000000000000000000000000\",\"image\":\"\",\"agent\":\"ours\",\"auto_accept\":true}", fine.tagger());
     defer a.free(response);
     try expect(std.mem.startsWith(u8, response, "HTTP/1.1 200"));
 }
