@@ -82,6 +82,16 @@ test "body parses back with model tool choice media type and facts and no key" {
     try strings("Taken 2023-11-14.", (try facts(allocator, no_place)).string);
     no_place.taken_at = null;
     try strings("No date or place.", (try facts(allocator, no_place)).string);
+    no_place.taken_at = -1;
+    try strings("Taken 1969-12-31.", (try facts(allocator, no_place)).string);
+    no_place.taken_at = -2208988800;
+    try strings("Taken 1900-01-01.", (try facts(allocator, no_place)).string);
+    no_place.taken_at = 7258118399;
+    try strings("Taken 2199-12-31.", (try facts(allocator, no_place)).string);
+    for ([_]i64{ std.math.maxInt(i64), std.math.minInt(i64), 7258118400, -2208988801 }) |at| {
+        no_place.taken_at = at;
+        try strings("No date or place.", (try facts(allocator, no_place)).string);
+    }
 }
 test "headers carry the key as x-api-key and no authorization" {
     const headers = Claude.headers("test-key");

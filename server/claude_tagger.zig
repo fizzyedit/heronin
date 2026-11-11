@@ -40,10 +40,11 @@ pub const Claude = struct {
     pub fn body(allocator: std.mem.Allocator, name: []const u8, request: wire.Request) ![]u8 {
         var facts: std.Io.Writer.Allocating = .init(allocator);
         defer facts.deinit();
-        if (request.taken_at) |at| if (at >= 0) {
-            const day = (std.time.epoch.EpochSeconds{ .secs = @intCast(at) }).getEpochDay().calculateYearDay();
+        // Years 1900..2199 only; one 400-year cycle later the calendar repeats, so dates before 1970 convert too.
+        if (request.taken_at) |at| if (at >= -2208988800 and at < 7258118400) {
+            const day = (std.time.epoch.EpochSeconds{ .secs = @intCast(at + 146097 * std.time.s_per_day) }).getEpochDay().calculateYearDay();
             const date = day.calculateMonthDay();
-            try facts.writer.print("Taken {d}-{d:0>2}-{d:0>2}.", .{ day.year, date.month.numeric(), date.day_index + 1 });
+            try facts.writer.print("Taken {d}-{d:0>2}-{d:0>2}.", .{ day.year - 400, date.month.numeric(), date.day_index + 1 });
         };
         if (request.place) |place| try facts.writer.print("{s}Near latitude {d:.2}, longitude {d:.2}.", .{ if (facts.written().len > 0) " " else "", place.lat, place.lon });
         if (facts.written().len == 0) try facts.writer.writeAll("No date or place.");
