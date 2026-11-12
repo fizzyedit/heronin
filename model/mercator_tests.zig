@@ -15,6 +15,7 @@ test "mercator fit chooses zoom and box center" {
     try t.expectEqual(@as(u5, 16), fitted.z);
     try t.expectEqualDeep(m.worldPx(16, one[0].lat, one[0].lon), fitted.center);
     try t.expectEqual(@as(u5, 3), m.fit(&[_]Point{}, 390, 600, 32).z);
+    try t.expectEqualDeep(m.Px{ .x = 1024, .y = 1024 }, m.fit(&[_]Point{}, 390, 600, 32).center);
     const pair = [_]Point{ .{ .lat = 60, .lon = -30 }, .{ .lat = 60, .lon = -29.99 } };
     const f = m.fit(&pair, 390, 600, 32);
     const span = m.worldPx(f.z, pair[1].lat, pair[1].lon).x - m.worldPx(f.z, pair[0].lat, pair[0].lon).x;

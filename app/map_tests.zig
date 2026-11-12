@@ -51,6 +51,12 @@ test "map limits requests retains PNG and failures and evicts oldest" {
     }
     try t.expectEqualStrings("png", map.get(key(71)).?);
     try t.expect(map.get(key(0)) == null);
+    map.step(transport, "");
+    callbacks[(calls - 1) % 2](contexts[(calls - 1) % 2], error.Io);
+    const failed_calls = calls;
+    try t.expect(map.get(key(0)) == null);
+    map.step(transport, "");
+    try t.expectEqual(failed_calls, calls);
 }
 test "map unauthorized signs out and deinit cancels loading jobs" {
     const sign = @import("sign_in.zig");
