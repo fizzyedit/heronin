@@ -65,3 +65,4 @@ pub const QueueItem = struct {
     last_error: ?[]const u8 = null,
     pub const Agent = enum { ours, yours, both };
 };
+pub const mercator = @import("mercator.zig");
