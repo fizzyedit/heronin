@@ -1,3 +1,4 @@
+const session = @import("app_session.zig");
 const drive_link = @import("drive_link.zig");
 const sign_in = @import("sign_in.zig");
 var places_base: ?[]const u8 = if (@import("builtin").cpu.arch == .wasm32) "" else null;
@@ -55,9 +56,12 @@ fn deinit(_: *anyopaque) void {
     current = .library;
 }
 fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
+    const host: *sdk.Host = @ptrCast(@alignCast(plugin.state));
     if (fake == null) {
         agent.init();
-        if (@import("builtin").cpu.arch == .wasm32) sign_in.check(agent.transport, places_base orelse "");
+        if (@import("builtin").cpu.arch != .wasm32)
+            session.cookie.value = session.hex(host.getSecret("heronin.session") orelse "");
+        if (places_base) |base| sign_in.check(agent.transport, base);
         @import("agent_settings.zig").load(agent.transport, places_base);
         state.tag_queue = &tagging;
         fake = try @import("fake_store.zig").FakeStore.init(@import("std").heap.page_allocator);
@@ -65,6 +69,9 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         drive_link.link.current(fake.?.store()).places(&state, library.State.placed);
     }
     sign_in.step();
+    if (@import("builtin").cpu.arch != .wasm32 and sign_in.account.state == .opening and
+        dvui.timerDoneOrNone(dvui.parentGet().data().id))
+        dvui.timer(dvui.parentGet().data().id, 2000000);
     drive_link.link.step();
     if (drive_link.link.changed) {
         drive_link.link.changed = false;
@@ -76,6 +83,11 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (current != .add) queue.step(drive_link.link.current(fake.?.store()));
     if (queue.busy) dvui.refresh(null, @src(), null);
     agent.transport.pump();
+    if (sign_in.session_changed) {
+        const saved = host.setSecret("heronin.session", if (session.cookie.value) |*v| v else "");
+        saved catch @import("std").log.err("session not saved", .{});
+        sign_in.session_changed = false;
+    }
     if (@import("builtin").cpu.arch == .wasm32) @import("core").transport.WebOAuth.pump();
     if (drive_link.link.state == .waiting or drive_link.link.retry) dvui.refresh(null, @src(), null);
     if (sign_in.account.state == .checking) dvui.refresh(null, @src(), null);
