@@ -1,3 +1,4 @@
+const map_tiles = @import("map_tiles.zig");
 const session = @import("app_session.zig");
 const drive_link = @import("drive_link.zig");
 const sign_in = @import("sign_in.zig");
@@ -108,6 +109,10 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
     if (sign_in.ready() and !reloaded) {
         tagging.step(drive_link.link.current(fake.?.store()), agent.post);
     }
+    if (sign_in.ready()) map_tiles.step(agent.transport, places_base);
+    for (map_tiles.cache.entries) |entry| if (entry.state == .loading) {
+        dvui.refresh(null, @src(), null);
+    };
     if (sign_in.ready()) library.places_client.step(&library.places_client.names, state.photos, state.places, agent.transport, places_base);
     if (library.places_client.names.busy) dvui.refresh(null, @src(), null);
     if (tagging.busy != null) dvui.refresh(null, @src(), null);
@@ -127,5 +132,6 @@ fn draw(_: ?*anyopaque) anyerror!dvui.App.Result {
         dvui.refresh(null, @src(), null);
     }
     if (current == .agent) agent.page(&current, &settings) else root.draw(&current, &state, &queue, drive_link.link.current(fake.?.store()));
+    if (sign_in.ready() and map_tiles.cache.len > 0) dvui.refresh(null, @src(), null);
     return .ok;
 }
