@@ -7,6 +7,7 @@ const server = @import("main.zig");
 test {
     _ = @import("claude_tests.zig");
     _ = @import("yours_tests.zig");
+    _ = @import("tiles_tests.zig");
 }
 const Agents = struct {
     arena: std.heap.ArenaAllocator = .init(a),
@@ -18,7 +19,7 @@ const Agents = struct {
         var writer: std.Io.Writer.Allocating = .init(self.arena.allocator());
         var http = std.http.Server.init(&reader, &writer.writer);
         var request = try http.receiveHead();
-        try server.serve(&request, self.arena.allocator(), fine.tagger(), yours, logic.default_threshold, 42, .{}, &self.sign_in, &self.stored);
+        try server.serve(&request, self.arena.allocator(), fine.tagger(), yours, logic.default_threshold, 42, .{}, &self.sign_in, &self.stored, null);
         return writer.written()[9..];
     }
 };
@@ -51,6 +52,7 @@ test "agent routes: both, 409 without yours, saved key kept and never sent, sign
     f.sign_in.config = .{ .id = "test-id", .secret = "", .public_url = "https://example.invalid/heronin", .allow = &.{} };
     f.stored.path = try std.fs.path.join(f.arena.allocator(), &.{ std.testing.TmpDir.parent_dir_path, &tmp.sub_path, "yours.zon" });
     try expect(std.mem.startsWith(u8, try f.send("GET", "/api/agent", "", null), "401"));
+    try expect(std.mem.startsWith(u8, try f.send("GET", "/heronin/api/tile/3/0/0.png", "", null), "401"));
     var hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(&@as([32]u8, @splat(1)), &hash, .{});
     try f.sign_in.sessions.append(a, .{ .hash = hash, .email = try a.dupe(u8, "bird@example.invalid"), .expires = 100 });
