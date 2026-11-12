@@ -117,3 +117,59 @@ test "token response reaches only the drive command arguments" {
     sign.lost();
     host.deliverEvents();
 }
+fn openURL(_: @import("dvui").OpenURLOptions) bool {
+    return false;
+}
+var seen_cookie: [80]u8 = undefined;
+var seen_cookie_len: usize = 0;
+fn cookieRequest(
+    ptr: *anyopaque,
+    a: std.mem.Allocator,
+    r: http.Request,
+    cb: http.DoneFn,
+    ctx: ?*anyopaque,
+) core.vfs.Error!http.Job {
+    if (r.headers.len > 0) {
+        seen_cookie_len = r.headers[r.headers.len - 1].value.len;
+        @memcpy(seen_cookie[0..seen_cookie_len], r.headers[r.headers.len - 1].value);
+    }
+    return request(ptr, a, r, cb, ctx);
+}
+test "native claim installs cookie token check carries it and logout clears it" {
+    const session = @import("app_session.zig");
+    const t = std.testing;
+    sign.account = .{ .arena = .init(t.allocator) };
+    defer sign.account.deinit();
+    @import("dvui").io = std.testing.io;
+    sign.open_url = openURL;
+    defer sign.open_url = @import("dvui").openURL;
+    var dummy: u8 = 0;
+    session.cookie = .{ .inner = .{
+        .ptr = &dummy,
+        .vtable = &.{ .request = cookieRequest, .cancel = cancel, .pump = pump },
+    } };
+    defer session.cookie.value = null;
+    sign.check(session.cookie.transport(), "http://127.0.0.1:1");
+    try answer(401, "");
+    sign.session_changed = false;
+    sign.open();
+    try t.expectEqual(.opening, sign.account.state);
+    try t.expectEqual(.waiting, sign.claim.state);
+    sign.claim.state = .done;
+    sign.claim.session = @splat('a');
+    sign.step();
+    try t.expectEqual(sign.claim.session, session.cookie.value);
+    try t.expect(sign.session_changed);
+    const expected: [64]u8 = @splat('a');
+    try t.expectEqualStrings("heronin_session=" ++ expected, seen_cookie[0..seen_cookie_len]);
+    try answer(502, "");
+    sign.session_changed = false;
+    sign.signOut();
+    try answer(204, "");
+    try t.expect(session.cookie.value == null and sign.session_changed);
+    session.cookie.value = @splat('a');
+    sign.session_changed = false;
+    sign.check(session.cookie.transport(), "http://127.0.0.1:1");
+    try answer(401, "");
+    try t.expect(session.cookie.value == null and sign.session_changed);
+}

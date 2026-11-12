@@ -55,7 +55,9 @@ pub fn init() void {
         transport = core.transport.Web.transport(std.heap.page_allocator);
     } else {
         native = .init(std.heap.page_allocator, dvui.io, null);
-        transport = native.transport();
+        const session = @import("../app_session.zig");
+        session.cookie = .{ .inner = native.transport() };
+        transport = session.cookie.transport();
     }
 }
 pub fn deinit() void {
