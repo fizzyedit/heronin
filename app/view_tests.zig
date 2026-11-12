@@ -655,3 +655,51 @@ test "Agent B headings precede grouped cards and radio fills follow selection" {
     try agentTap("heronin-switch-0");
     try std.testing.expectEqual(!before, agent_settings.auto);
 }
+
+fn mapGeometry() !dvui.App.Result {
+    _ = try frame();
+    const map = (try dvui.testing.tagGet("heronin-map")).rect;
+    const attribution = (try dvui.testing.tagGet("heronin-map-attribution")).rect;
+    const tabs = (try dvui.testing.tagGet("heronin-tabs")).rect;
+    try std.testing.expect(map.h > 400);
+    try std.testing.expect(map.y + map.h <= attribution.y);
+    try std.testing.expect(attribution.y + attribution.h <= tabs.y);
+    const clusters = @import("views/places.zig").groups(&state).clusters;
+    var dots: usize = 0;
+    while (dvui.tagGet(library.fmt("heronin-map-dot-{d}", .{dots})) != null) : (dots += 1) {}
+    try std.testing.expectEqual(clusters.len, dots);
+    return .ok;
+}
+test "Map frames every place, reserves attribution, zooms around center and opens species" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    queue = .{ .allocator = std.testing.allocator };
+    defer queue.deinit();
+    const map = @import("views/map.zig");
+    map.view = .{};
+    defer @import("map_tiles.zig").cache.deinit();
+    current = .map;
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    try dvui.testing.settle(frame);
+    _ = try dvui.testing.step(mapGeometry);
+    try std.testing.expectEqual(@as(u5, 3), map.view.z);
+    try dvui.testing.expectVisible("heronin-map-dot-0");
+    const before = map.view.scroll.viewport;
+    try tap("heronin-map-zoom-in");
+    try std.testing.expectEqual(@as(u5, 4), map.view.z);
+    const after = map.view.scroll.viewport;
+    try std.testing.expectApproxEqAbs((before.x + before.w / 2) * 2, after.x + after.w / 2, 1);
+    try std.testing.expectApproxEqAbs((before.y + before.h / 2) * 2, after.y + after.h / 2, 1);
+    try tap("heronin-map-zoom-out");
+    try std.testing.expectEqual(@as(u5, 3), map.view.z);
+    try tap("heronin-map-dot-0");
+    try std.testing.expectEqual(.species, current);
+    try std.testing.expectEqual(@as(?usize, 0), state.at_cluster);
+    try dvui.testing.expectVisible("heronin-place-chip");
+}

@@ -20,6 +20,7 @@ pub fn draw(current: *tabs.Tab, state: *library.State, queue: *imports.Queue, st
     switch (current.*) {
         .library => if (state.open != null) photo.draw(state, store) else library.draw(state),
         .species => species.draw(state, library.now(), store, current),
+        .map => @import("map.zig").draw(state, current),
         .add => add.draw(queue, state, store, current),
         else => dvui.labelNoFmt(@src(), current.title(), .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } }),
     }

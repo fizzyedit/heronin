@@ -3,12 +3,14 @@ const theme = @import("../theme.zig");
 pub const Tab = enum {
     library,
     species,
+    map,
     add,
     agent,
     pub fn title(self: Tab) []const u8 {
         return switch (self) {
             .library => "Library",
             .species => "Species",
+            .map => "Map",
             .add => "Add",
             .agent => "Agent",
         };
@@ -17,7 +19,7 @@ pub const Tab = enum {
 pub fn draw(current: *Tab) void {
     var bar = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .horizontal, .gravity_y = 1, .tag = "heronin-tabs" });
     defer bar.deinit();
-    const icons = [_][]const u8{ dvui.entypo.images, dvui.entypo.leaf, dvui.entypo.plus, dvui.entypo.user };
+    const icons = [_][]const u8{ dvui.entypo.images, dvui.entypo.leaf, dvui.entypo.map, dvui.entypo.plus, dvui.entypo.user };
     inline for (@typeInfo(Tab).@"enum".field_names, 0..) |name, i| {
         const tab: Tab = @field(Tab, name);
         const selected = current.* == tab;
