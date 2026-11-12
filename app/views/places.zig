@@ -52,14 +52,23 @@ pub fn matches(g: Groups, state: *lib.State, code: []const u8, query: []const u8
 pub fn draw(state: *lib.State, store: api.Store, g: Groups) void {
     if (g.clusters.len == 0) lib.label(@src(), "No photos with a place yet", .{});
     for (g.clusters, 0..) |c, i| {
-        var box = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = i, .expand = .horizontal });
+        var box = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = i, .tag = lib.fmt("heronin-place-card-{d}", .{i}), .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.card }, .border = .all(1), .corners = .all(12), .color_border = .{ .color = theme.border } });
         defer box.deinit();
         var row: dvui.ButtonWidget = undefined;
-        row.init(@src(), .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-place-{d}", .{i}), .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.washes[i % 6] } });
+        row.init(@src(), .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-place-{d}", .{i}), .margin = .all(0), .min_size_content = .{ .h = 44 }, .border = .all(0), .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.card } });
         row.processEvents();
         row.drawBackground();
-        lib.label(@src(), name(state, c), .{ .id_extra = i, .tag = lib.fmt("heronin-species-{x}", .{dvui.parentGet().data().id}), .font = .find(.{ .family = theme.species_face, .size = theme.size.species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
+        var contents = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = i, .expand = .horizontal });
+        for (c.members[0..@min(1, c.members.len)]) |m| {
+            for (g.items, 0..) |item, member| if (member == m) {
+                for (state.items, 0..) |photo, index| if (index == item) thumbnail(state, photo.photo.id, lib.fmt("heronin-place-thumb-{d}", .{i}), .{ .w = 64, .h = 52 }, i);
+            };
+        }
+        var text_box = dvui.box(@src(), .{}, .{ .id_extra = i, .expand = .horizontal });
+        lib.label(@src(), name(state, c), .{ .id_extra = i, .tag = lib.fmt("heronin-species-{x}", .{dvui.parentGet().data().id}), .font = .find(.{ .family = theme.species_face, .size = theme.size.heading, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
         lib.label(@src(), lib.fmt("{d} photos · {d} species", .{ c.count, g.entries(state, c).len }), .{ .id_extra = i });
+        text_box.deinit();
+        contents.deinit();
         if (row.clicked()) {
             state.at_cluster = i;
             state.segment = .seen;
@@ -91,7 +100,7 @@ pub fn draw(state: *lib.State, store: api.Store, g: Groups) void {
             if (dvui.button(@src(), "Cancel", .{}, .{ .id_extra = i, .tag = "heronin-rename-cancel", .min_size_content = .{ .h = 44 } })) state.renaming = null;
             if (state.rename_failed) lib.label(@src(), "Could not save the name", .{ .id_extra = i });
         } else if (c.place != null or largest < std.math.maxInt(u16)) {
-            if (dvui.button(@src(), "Rename", .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-rename-{d}", .{i}), .min_size_content = .{ .h = 44 } })) {
+            if (dvui.button(@src(), "Rename", .{}, .{ .id_extra = i, .tag = lib.fmt("heronin-rename-{d}", .{i}), .color_fill = .{ .color = theme.card }, .border = .all(2), .color_border = .{ .color = theme.border }, .min_size_content = .{ .h = 44 } })) {
                 state.renaming = i;
                 state.rename_failed = false;
             }
@@ -102,4 +111,15 @@ fn renamed(ctx: ?*anyopaque, result: api.Error![]const model.Place) void {
     const state: *lib.State = @ptrCast(@alignCast(ctx.?));
     state.rename_failed = std.meta.isError(result);
     if (!state.rename_failed) lib.State.placed(ctx, result);
+}
+
+pub fn thumbnail(state: *lib.State, id: []const u8, tag: []const u8, size: dvui.Size, extra: usize) void {
+    for (state.items, 0..) |item, i| {
+        if (!std.mem.eql(u8, item.photo.id, id)) continue;
+        for (state.thumbs, 0..) |thumb, ti| if (ti == i) {
+            var image = dvui.box(@src(), .{}, .{ .id_extra = extra, .tag = tag, .min_size_content = size, .max_size_content = .{ .w = size.w, .h = size.h }, .background = true, .color_fill = .{ .color = theme.washes[@min(thumb.wash, theme.washes.len - 1)] } });
+            image.deinit();
+        };
+        break;
+    }
 }

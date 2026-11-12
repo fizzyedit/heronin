@@ -557,3 +557,46 @@ test "encoded thumbnail stays inside its tile and opens in photo" {
     try dvui.testing.settle(frame);
     try dvui.testing.expectVisible("photo-image");
 }
+
+fn cardGeometryFrame() !dvui.App.Result {
+    _ = try speciesFrame();
+    const seen = (try dvui.testing.tagGet("heronin-seg-seen")).rect;
+    const missing = (try dvui.testing.tagGet("heronin-seg-not-yet")).rect;
+    const places = (try dvui.testing.tagGet("heronin-seg-by-place")).rect;
+    try std.testing.expectApproxEqAbs(seen.x + seen.w, missing.x, 0.01);
+    try std.testing.expectApproxEqAbs(missing.x + missing.w, places.x, 0.01);
+    try std.testing.expectApproxEqAbs(seen.w, missing.w, 0.01);
+    try std.testing.expectApproxEqAbs(missing.w, places.w, 0.01);
+    if (state.segment == .seen) {
+        const thumb = (try dvui.testing.tagGet("heronin-seen-thumb-0")).rect;
+        const name = (try dvui.testing.tagGet("heronin-seen-name-0")).rect;
+        const scale = dvui.parentGet().screenRectScale(.{}).s;
+        try std.testing.expect(thumb.x + thumb.w <= name.x);
+        try std.testing.expectApproxEqAbs(@as(f32, 64) * scale, thumb.w, 0.01);
+        try std.testing.expectApproxEqAbs(@as(f32, 52) * scale, thumb.h, 0.01);
+    } else {
+        const card = (try dvui.testing.tagGet("heronin-place-card-0")).rect;
+        const rename = (try dvui.testing.tagGet("heronin-rename-0")).rect;
+        try std.testing.expect(rename.x >= card.x and rename.y >= card.y);
+        try std.testing.expect(rename.x + rename.w <= card.x + card.w);
+        try std.testing.expect(rename.y + rename.h <= card.y + card.h);
+    }
+    return .ok;
+}
+test "species card geometry joins equal segments, puts thumbnails before names and contains Rename" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 390, .h = 844 } });
+    defer testing.deinit();
+    fake = try .init(std.testing.allocator);
+    defer fake.deinit();
+    state = .{};
+    defer state.arena.deinit();
+    fake.store().list(null, 60, &state, library.State.listed);
+    fake.store().places(&state, library.State.placed);
+    fake.store().pump();
+    state.segment = .seen;
+    try dvui.testing.settle(speciesFrame);
+    _ = try dvui.testing.step(cardGeometryFrame);
+    state.segment = .by_place;
+    try dvui.testing.settle(speciesFrame);
+    _ = try dvui.testing.step(cardGeometryFrame);
+}

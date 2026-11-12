@@ -25,10 +25,10 @@ pub fn draw(state: *lib.State, now: i64, store: @import("../store.zig").Store, c
     const recent = model.life_list.newThisWeek(entries, now, &new_buf);
     dvui.labelNoFmt(@src(), "Life list", .{}, .{ .font = dvui.Font.theme(.title), .color_text = .{ .color = theme.red[0] } });
     dvui.label(@src(), "{d} species", .{entries.len}, .{ .font = dvui.Font.theme(.body).withSize(theme.size.meta) });
-    var segments = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+    var segments = dvui.box(@src(), .{ .dir = .horizontal, .equal_space = true }, .{ .expand = .horizontal, .border = .all(2), .corners = .all(22), .color_border = .{ .color = theme.red[0] } });
     inline for (.{ "Seen", "Not yet", "By place" }, .{ "heronin-seg-seen", "heronin-seg-not-yet", "heronin-seg-by-place" }, 0..) |title, tag, i| {
         const chosen = @backingInt(state.segment) == i;
-        if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = tag, .min_size_content = .{ .h = 44 }, .border = .all(2), .corners = .all(22), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) {
+        if (dvui.button(@src(), title, .{}, .{ .id_extra = i, .tag = tag, .expand = .horizontal, .margin = .all(0), .min_size_content = .{ .h = 44 }, .border = .all(0), .corners = .all(0), .color_fill = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_hover = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_fill_press = .{ .color = if (chosen) theme.red[0] else theme.card }, .color_text = .{ .color = if (chosen) theme.card else theme.red[0] }, .color_border = .{ .color = theme.red[0] } })) {
             state.segment = @fromBackingInt(@intCast(i));
             state.at_cluster = null;
             state.renaming = null;
@@ -43,8 +43,12 @@ pub fn draw(state: *lib.State, now: i64, store: @import("../store.zig").Store, c
     }
     if (recent.len > 0) {
         const e = entries[recent[0]];
-        var banner = dvui.box(@src(), .{}, .{ .tag = "heronin-new-week", .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.mustard[2] } });
-        lib.label(@src(), lib.fmt("New this week: {s}{s}. First photo {s}.", .{ e.species.common, if (recent.len > 1) lib.fmt(" and {d} more", .{recent.len - 1}) else "", day(e.first_at.?, now) }), .{});
+        var banner = dvui.box(@src(), .{ .dir = .horizontal }, .{ .tag = "heronin-new-week", .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.mustard[2] } });
+        places.thumbnail(state, e.best, "heronin-new-thumb", .{ .w = 44, .h = 36 }, 0);
+        var text = dvui.box(@src(), .{}, .{ .expand = .horizontal });
+        lib.label(@src(), lib.fmt("New this week: {s}", .{e.species.common}), .{});
+        lib.label(@src(), lib.fmt("First photo {s}", .{day(e.first_at.?, now)}), .{});
+        text.deinit();
         banner.deinit();
     }
     var scroll = core.widgets.ScrollArea.init(@src(), .{ .horizontal = .none }, .{ .expand = .both });
@@ -61,21 +65,26 @@ pub fn draw(state: *lib.State, now: i64, store: @import("../store.zig").Store, c
             if (!model.species.matches(e.species.common, query) and !model.species.matches(e.species.scientific, query) and !places.matches(groups, state, e.species.code, query)) continue;
             const index = model.species.index(e.species.code).?;
             var row: dvui.ButtonWidget = undefined;
-            row.init(@src(), .{}, .{ .id_extra = index, .tag = lib.fmt("heronin-seen-{d}", .{index}), .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.washes[index % 6] } });
+            row.init(@src(), .{}, .{ .id_extra = index, .tag = lib.fmt("heronin-seen-{d}", .{index}), .min_size_content = .{ .h = 44 }, .border = .all(1), .corners = .all(12), .color_border = .{ .color = theme.border }, .expand = .horizontal, .background = true, .color_fill = .{ .color = theme.card } });
             row.processEvents();
             row.drawBackground();
-            lib.species(e.species.common, theme.size.species);
+            var contents = dvui.box(@src(), .{ .dir = .horizontal }, .{ .id_extra = index, .expand = .horizontal });
+            places.thumbnail(state, e.best, lib.fmt("heronin-seen-thumb-{d}", .{index}), .{ .w = 64, .h = 52 }, index);
+            var text = dvui.box(@src(), .{}, .{ .id_extra = index, .expand = .horizontal });
+            lib.label(@src(), e.species.common, .{ .id_extra = index, .tag = lib.fmt("heronin-seen-name-{d}", .{index}), .font = .find(.{ .family = theme.species_face, .size = theme.size.species, .weight = .bold }), .color_text = .{ .color = theme.red[0] } });
             var place: ?[]const u8 = null;
             for (photos[0..n]) |photo| if (std.mem.eql(u8, photo.id, e.first)) {
                 place = lib.photoPlace(photo, state.photos, state.places);
                 break;
             };
             lib.label(@src(), if (e.first_at) |at| lib.fmt("First seen {s}{s}{s}", .{ day(at, now), if (place != null) " · " else "", place orelse "" }) else "First seen: date unknown", .{ .font = dvui.Font.theme(.body).withSize(theme.size.meta) });
+            text.deinit();
             var is_new = false;
             for (recent) |i| {
                 if (i == ei) is_new = true;
             }
-            dvui.label(@src(), "{d}", .{e.count}, .{ .background = true, .color_fill = .{ .color = if (is_new) theme.mustard[0] else theme.chip } });
+            dvui.label(@src(), "{d}", .{e.count}, .{ .id_extra = index, .background = true, .color_fill = .{ .color = if (is_new) theme.mustard[0] else theme.chip } });
+            contents.deinit();
             if (row.clicked()) {
                 state.species = model.species.table[index].code;
                 state.filter = .species;
