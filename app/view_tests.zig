@@ -600,3 +600,58 @@ test "species card geometry joins equal segments, puts thumbnails before names a
     try dvui.testing.settle(speciesFrame);
     _ = try dvui.testing.step(cardGeometryFrame);
 }
+
+test "Agent B headings precede grouped cards and radio fills follow selection" {
+    var testing = try dvui.testing.init(.{ .window_size = .{ .w = 900, .h = 2400 } });
+    defer testing.deinit();
+    const sign = @import("sign_in.zig");
+    defer sign.account.deinit();
+    const yours = @import("agent_settings.zig");
+    defer yours.deinit();
+    sign.account.state = .signed_in;
+    agent_settings = .{};
+    yours.state.connected = false;
+    defer dvui.debug.widget_id = .undef;
+    try dvui.testing.settle(agentFrame);
+    for (0..4) |i| {
+        const heading = try dvui.testing.tagGet(library.fmt("heronin-heading-{d}", .{i}));
+        const card = try dvui.testing.tagGet(library.fmt("heronin-card-{d}", .{i}));
+        try std.testing.expect(heading.rect.y + heading.rect.h <= card.rect.y);
+    }
+    for (0..3) |i| {
+        dvui.debug.widget_id = (try dvui.testing.tagGet(library.fmt("heronin-radio-{d}", .{i}))).id;
+        try dvui.testing.settle(struct {
+            fn check() !dvui.App.Result {
+                _ = try agentFrame();
+                const options = dvui.debug.target_wd.?.options;
+                const selected = (try dvui.testing.tagGet("heronin-radio-0")).id == dvui.debug.widget_id;
+                try std.testing.expectEqual(if (selected) theme.orange[0] else theme.card, options.color_fill.?.color);
+                return .ok;
+            }
+        }.check);
+    }
+    dvui.debug.widget_id = .undef;
+    try agentTap("heronin-agent-1");
+    try agentTap("heronin-agent-2");
+    try std.testing.expectEqual(.ours, agent_settings.agent);
+    yours.state.connected = true;
+    try agentTap("heronin-agent-2");
+    try std.testing.expectEqual(.both, agent_settings.agent);
+    _ = try dvui.testing.step(struct {
+        fn check() !dvui.App.Result {
+            _ = try agentFrame();
+            const scale = dvui.windowNaturalScale();
+            for (0..4) |i| {
+                const row = try dvui.testing.tagGet(library.fmt("heronin-switch-{d}", .{i}));
+                try std.testing.expect(row.rect.h >= 44 * scale);
+                const track = try dvui.testing.tagGet(library.fmt("heronin-track-{d}", .{i}));
+                try std.testing.expectEqual(46 * scale, track.rect.w);
+                try std.testing.expectEqual(28 * scale, track.rect.h);
+            }
+            return .ok;
+        }
+    }.check);
+    const before = agent_settings.auto;
+    try agentTap("heronin-switch-0");
+    try std.testing.expectEqual(!before, agent_settings.auto);
+}
