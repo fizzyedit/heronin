@@ -50,3 +50,6 @@ test "agent settings load, save the fields with an empty key, zero the key once 
     try reply(204, "");
     try t.expect(s.saved == .saved and s.has_key and std.mem.allEqual(u8, &s.key, 0));
 }
+test {
+    _ = @import("map_tests.zig");
+}

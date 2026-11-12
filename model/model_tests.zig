@@ -57,3 +57,6 @@ test {
     _ = @import("places_tests.zig");
     _ = @import("life_list_tests.zig");
 }
+test {
+    _ = @import("mercator_tests.zig");
+}
