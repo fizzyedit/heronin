@@ -5,6 +5,7 @@ const Fake = @import("fake_tagger.zig").Fake;
 const Gazetteer = @import("place_names.zig").Gazetteer;
 const auth = @import("auth.zig");
 const Claude = @import("claude_tagger.zig").Claude;
+const tiles = @import("tiles.zig");
 const yours_file = @import("yours.zig");
 pub const Config = struct { google: ?auth.Config = null, gazetteer: []const u8 = "geonames.txt", port: u16 = 8790, threshold: f32 = decisions.default_threshold, tagger: []const u8 = "fake", claude: ?Claude.Config = null };
 pub fn checkConfig(config: Config) !void {
@@ -15,9 +16,10 @@ const cap = 2 * 1024 * 1024;
 fn respond(request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
     try request.respond(body, .{ .status = status, .keep_alive = false, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }} });
 }
-const Route = enum { tag, place, login, callback, token, logout, agent, app_session };
+const Route = enum { tag, place, login, callback, token, logout, agent, app_session, tile };
 fn route(target: []const u8) ?Route {
     const path = if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target;
+    if (std.mem.startsWith(u8, path, "/api/tile/")) return .tile;
     const paths = std.StaticStringMap(Route).initComptime(.{
         .{ "/api/app-session", .app_session },
         .{ "/api/tag", .tag },
@@ -31,16 +33,16 @@ fn route(target: []const u8) ?Route {
     return paths.get(path[0 .. std.mem.indexOfScalar(u8, path, '?') orelse path.len]);
 }
 pub fn handle(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer) !void {
-    return serve(request, allocator, tagger, null, threshold, now, gazetteer, null, null);
+    return serve(request, allocator, tagger, null, threshold, now, gazetteer, null, null, null);
 }
 pub fn handleAuth(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth) !void {
-    return serve(request, allocator, tagger, null, threshold, now, gazetteer, sign_in, null);
+    return serve(request, allocator, tagger, null, threshold, now, gazetteer, sign_in, null, null);
 }
-pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, connected: ?wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth, stored: ?*yours_file.Yours) !void {
+pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, tagger: wire.Tagger, connected: ?wire.Tagger, threshold: f32, now: i64, gazetteer: Gazetteer, sign_in: ?*auth.Auth, stored: ?*yours_file.Yours, tile_cache: ?*tiles.Tiles) !void {
     const matched = route(request.head.target) orelse return respond(request, .not_found, "{\"error\":\"not found\"}");
     const post = matched == .tag or matched == .logout or matched == .app_session;
     if (request.head.method != (if (post) std.http.Method.POST else .GET) and !(matched == .agent and request.head.method == .POST)) return request.respond("{\"error\":\"method not allowed\"}", .{ .status = .method_not_allowed, .keep_alive = false, .extra_headers = &.{ .{ .name = "allow", .value = if (matched == .agent) "GET, POST" else if (post) "POST" else "GET" }, .{ .name = "content-type", .value = "application/json" } } });
-    if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout or matched == .agent)) {
+    if (sign_in) |configured| if (configured.config != null and (matched == .tag or matched == .place or matched == .token or matched == .logout or matched == .agent or matched == .tile)) {
         var headers = request.iterateHeaders();
         var cookie: ?[]const u8 = null;
         while (headers.next()) |h| if (std.ascii.eqlIgnoreCase(h.name, "cookie")) {
@@ -61,6 +63,16 @@ pub fn serve(request: *std.http.Server.Request, allocator: std.mem.Allocator, ta
             .logout => .logout,
             else => unreachable,
         });
+    }
+    if (matched == .tile) {
+        const target = request.head.target;
+        const tile = tiles.parse(if (std.mem.startsWith(u8, target, "/heronin")) target[8..] else target) orelse return respond(request, .bad_request, "{\"error\":\"invalid tile\"}");
+        const cache = tile_cache orelse return respond(request, .service_unavailable, "{\"error\":\"tiles not configured\"}");
+        return switch (try cache.get(allocator, tile, now)) {
+            .png => |body| request.respond(body, .{ .keep_alive = false, .extra_headers = &.{ .{ .name = "content-type", .value = "image/png" }, .{ .name = "cache-control", .value = "private, max-age=604800" } } }),
+            .missing => respond(request, .not_found, "{\"error\":\"no tile\"}"),
+            .unavailable => respond(request, .bad_gateway, "{\"error\":\"tiles unavailable\"}"),
+        };
     }
     if (matched == .place) {
         var lat: f64 = std.math.nan(f64);
@@ -142,6 +154,7 @@ pub fn main(init: std.process.Init) !void {
     var yours: yours_file.Yours = .{ .gpa = init.gpa, .io = init.io, .path = try std.fs.path.join(allocator, &.{ init.environ_map.get("HERONIN_DATA") orelse ".", "yours.zon" }) };
     defer yours.deinit();
     try yours.load();
+    var tile_cache: tiles.Tiles = .{ .io = init.io, .dir = try std.fs.path.join(allocator, &.{ init.environ_map.get("HERONIN_DATA") orelse ".", "tiles" }) };
     while (true) {
         const stream = listener.accept(init.io) catch |err| {
             std.log.warn("accept failed: {s}", .{@errorName(err)});
@@ -156,7 +169,7 @@ pub fn main(init: std.process.Init) !void {
         var writer = stream.writer(init.io, &write_buffer);
         var server = std.http.Server.init(&reader.interface, &writer.interface);
         var request = server.receiveHead() catch continue;
-        serve(&request, arena.allocator(), tagger, yours.tagger(init.io), config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in, &yours) catch {
+        serve(&request, arena.allocator(), tagger, yours.tagger(init.io), config.threshold, std.Io.Clock.real.now(init.io).toSeconds(), gazetteer, &sign_in, &yours, &tile_cache) catch {
             respond(&request, .internal_server_error, "{\"error\":\"internal\"}") catch {};
         };
     }
